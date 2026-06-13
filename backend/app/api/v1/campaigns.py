@@ -8,6 +8,7 @@ from app.models.customer import Customer
 from app.models.campaign import Segment, Campaign, Message, AuditLog
 from app.services.segment_engine import segment_engine
 from app.services.channel_client import channel_client
+from app.services.agents_service import agents_service
 import logging
 import asyncio
 
@@ -236,3 +237,16 @@ def send_campaign(id: UUID4, payload: Dict[str, Any], background_tasks: Backgrou
     db.commit()
     
     return {"status": "dispatched", "targets_count": len(customer_ids)}
+
+class RecommendRequest(BaseModel):
+    prompt: str
+
+@router.post("/recommend")
+def recommend_campaign(payload: RecommendRequest):
+    """Runs the LangGraph orchestration to generate audience, channel, and content recommendations"""
+    try:
+        recommendations = agents_service.generate_recommendations(payload.prompt)
+        return recommendations
+    except Exception as e:
+        logger.error(f"Recommendation generation failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to run AI recommendation engine.")
