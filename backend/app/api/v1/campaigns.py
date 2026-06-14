@@ -30,6 +30,86 @@ class CampaignCreate(BaseModel):
     channel: str # whatsapp, sms, email, rcs
     content: str
     prompt: Optional[str] = None
+    is_journey: Optional[bool] = False
+    fallback_channel: Optional[str] = None
+    fallback_content: Optional[str] = None
+
+async def check_and_execute_fallback_step(message_id: str, fallback_channel: str, fallback_content: str, db_session_factory):
+    # Wait for 8 seconds (simulating 24 hours conversion window for read receipts)
+    await asyncio.sleep(8.0)
+    
+    db = db_session_factory()
+    try:
+        from app.models.campaign import Message, Campaign, AuditLog
+        from app.models.customer import Customer
+        from app.services.channel_client import channel_client
+        import uuid
+        
+        # Load primary message
+        primary_msg = db.query(Message).filter(Message.id == message_id).first()
+        if not primary_msg:
+            return
+            
+        # Check if the primary message was opened/read/clicked/converted
+        # If still in sent or delivered status, it was NOT opened!
+        if primary_msg.status in ["sent", "delivered", "pending"]:
+            logger.info(f"Journey Fallback Triggered: Message {message_id} was not opened. Sending fallback via {fallback_channel}.")
+            
+            customer = db.query(Customer).filter(Customer.id == primary_msg.customer_id).first()
+            if not customer:
+                return
+                
+            recipient = customer.email if fallback_channel == "email" else customer.phone
+            if not recipient:
+                return
+                
+            # Create fallback message record under the same campaign
+            fallback_msg = Message(
+                id=uuid.uuid4(),
+                campaign_id=primary_msg.campaign_id,
+                customer_id=primary_msg.customer_id,
+                channel=fallback_channel,
+                recipient=recipient,
+                content=fallback_content,
+                status="pending"
+            )
+            db.add(fallback_msg)
+            db.commit()
+            
+            # Send fallback message via stub
+            success = await channel_client.send_message(
+                message_id=str(fallback_msg.id),
+                campaign_id=str(primary_msg.campaign_id),
+                recipient=recipient,
+                message_text=fallback_content,
+                channel=fallback_channel
+            )
+            
+            if success:
+                fallback_msg.status = "sent"
+            else:
+                fallback_msg.status = "failed"
+                fallback_msg.error_message = "Failed to dispatch fallback to Channel Service."
+            db.commit()
+            
+            # Log audit trail
+            audit = AuditLog(
+                action="JOURNEY_FALLBACK_EXECUTED",
+                actor="journey_engine",
+                details={
+                    "primary_message_id": message_id,
+                    "fallback_message_id": str(fallback_msg.id),
+                    "channel": fallback_channel
+                }
+            )
+            db.add(audit)
+            db.commit()
+            logger.info(f"Journey Fallback message sent successfully: {fallback_msg.id}")
+    except Exception as e:
+        logger.error(f"Error in journey fallback task: {e}")
+        db.rollback()
+    finally:
+        db.close()
 
 # Background worker task for dispatching campaign
 async def execute_campaign_dispatch(campaign_id: str, channel: str, content: str, customer_ids: List[str]):
@@ -93,10 +173,21 @@ async def execute_campaign_dispatch(campaign_id: str, channel: str, content: str
             
             if success:
                 msg.status = "sent"
+                db.commit()
+                # Schedule journey fallback check if campaign is multi-step journey
+                if campaign.is_journey and campaign.fallback_channel and campaign.fallback_content:
+                    asyncio.create_task(
+                        check_and_execute_fallback_step(
+                            str(msg.id),
+                            campaign.fallback_channel,
+                            campaign.fallback_content,
+                            SessionLocal
+                        )
+                    )
             else:
                 msg.status = "failed"
                 msg.error_message = "Failed to dispatch to Channel Service."
-            db.commit()
+                db.commit()
             
         # Complete Campaign Status
         campaign.status = "completed"
@@ -155,7 +246,10 @@ def create_campaign(
         name=payload.name,
         segment_id=payload.segment_id,
         prompt=payload.prompt,
-        status="draft"
+        status="draft",
+        is_journey=payload.is_journey,
+        fallback_channel=payload.fallback_channel,
+        fallback_content=payload.fallback_content
     )
     db.add(campaign)
     db.commit()
@@ -170,7 +264,10 @@ def create_campaign(
             "name": campaign.name,
             "segment_id": str(campaign.segment_id),
             "prompt": campaign.prompt,
-            "status": campaign.status
+            "status": campaign.status,
+            "is_journey": campaign.is_journey,
+            "fallback_channel": campaign.fallback_channel,
+            "fallback_content": campaign.fallback_content
         },
         "default_content": payload.content,
         "channel": payload.channel

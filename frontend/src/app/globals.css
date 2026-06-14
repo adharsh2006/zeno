@@ -356,6 +356,7 @@ body {
 }
 
 /* Cursor ambient aura overlay */
+/* Cursor ambient aura overlay */
 .cursor-aura {
   position: fixed;
   width: 350px;
@@ -368,4 +369,107 @@ body {
   mix-blend-mode: screen;
   transition: width 0.3s, height 0.3s;
 }
+
+/* Light Theme Variables and Class Overrides */
+.light {
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --card: rgba(255, 255, 255, 0.85);
+  --card-foreground: #0f172a;
+  --primary: #6d28d9;
+  --primary-foreground: #ffffff;
+  --secondary: #f1f5f9;
+  --secondary-foreground: #0f172a;
+  --muted: #f8fafc;
+  --muted-foreground: #64748b;
+  --accent: #cbd5e1;
+  --border: rgba(15, 23, 42, 0.08);
+}
+
+.light body {
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.light .grid-overlay {
+  background-image: 
+    linear-gradient(to right, rgba(15, 23, 42, 0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(15, 23, 42, 0.03) 1px, transparent 1px);
+}
+
+.light .ambient-glow {
+  background: radial-gradient(circle at 50% 0%, rgba(109, 40, 217, 0.06) 0%, rgba(99, 102, 241, 0.01) 50%, transparent 80%);
+}
+
+.light .glass-panel {
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  box-shadow: 0 4px 30px rgba(15, 23, 42, 0.04);
+}
+
+.light .glass-panel:hover {
+  border-color: rgba(15, 23, 42, 0.1);
+  box-shadow: 0 4px 40px rgba(109, 40, 217, 0.03);
+}
+
+.light ::-webkit-scrollbar-track {
+  background: #f8fafc;
+}
+.light ::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+}
+.light ::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+.light .terminal-window {
+  background: #0f172a;
+  color: #f8fafc;
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.light .terminal-header {
+  background: rgba(255, 255, 255, 0.05);
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+.light .phone-shell {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+  box-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.15), 0 0 0 1px rgba(15, 23, 42, 0.05);
+}
+
+.light .sms-bubble {
+  background: #cbd5e1;
+  color: #0f172a;
+}
+
+.light .kanban-col {
+  background: rgba(241, 245, 249, 0.6);
+  border-color: rgba(15, 23, 42, 0.05);
+}
+
+.light .kanban-item {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.06);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.03);
+}
+
+.light .kanban-item:hover {
+  border-color: rgba(109, 40, 217, 0.3);
+  box-shadow: 0 4px 16px rgba(109, 40, 217, 0.08);
+}
+
+.light .timeline-line {
+  background: rgba(15, 23, 42, 0.08);
+}
+
+.light .timeline-dot {
+  border-color: #f8fafc;
+}
+
+.light .cursor-aura {
+  background: radial-gradient(circle, rgba(109, 40, 217, 0.02) 0%, rgba(99, 102, 241, 0.005) 40%, transparent 70%);
+}
+
 

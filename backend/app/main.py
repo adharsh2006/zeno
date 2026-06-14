@@ -78,6 +78,29 @@ def seed_default_users():
     finally:
         db.close()
 
+def seed_default_segments():
+    from app.core.database import SessionLocal
+    from app.models.campaign import Segment
+    
+    db = SessionLocal()
+    try:
+        existing_seg = db.query(Segment).filter(Segment.name == "At-Risk VIP Shoppers").first()
+        if not existing_seg:
+            at_risk_seg = Segment(
+                name="At-Risk VIP Shoppers",
+                description="Customers with 2+ past orders but inactive for over 60 days.",
+                rules={"min_orders": 2, "days_inactive": 60},
+                ai_explanation="Auto-surfaced high-value cohorts at high risk of churn."
+            )
+            db.add(at_risk_seg)
+            db.commit()
+            logger.info("Seeded default segment 'At-Risk VIP Shoppers'")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to seed default segments: {e}")
+    finally:
+        db.close()
+
 # Startup DB initialisation
 @app.on_event("startup")
 def startup_event():
@@ -86,6 +109,7 @@ def startup_event():
         init_db()
         logger.info("Database initialized successfully.")
         seed_default_users()
+        seed_default_segments()
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")
 

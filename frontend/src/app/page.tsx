@@ -33,7 +33,9 @@ import {
   Layers as LayersIcon,
   Lock,
   LogOut,
-  UserCheck
+  UserCheck,
+  Sun,
+  Moon
 } from "lucide-react";
 import { 
   BarChart, 
@@ -84,6 +86,9 @@ interface Customer {
   order_count: number;
   total_spend: number;
   created_at: string;
+  engagement_status?: string;
+  engagement_score?: number;
+  churn_risk?: boolean;
 }
 
 interface CustomerDetail {
@@ -96,6 +101,9 @@ interface CustomerDetail {
   created_at: string;
   orders: any[];
   touchpoints: any[];
+  engagement_status?: string;
+  engagement_score?: number;
+  churn_risk?: boolean;
 }
 
 interface AuditLog {
@@ -118,6 +126,29 @@ export default function Dashboard() {
   const [activeTab, setActiveTab] = useState("overview");
   const [loading, setLoading] = useState(false);
   const [seeding, setSeeding] = useState(false);
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [isJourney, setIsJourney] = useState(false);
+  const [fallbackChannel, setFallbackChannel] = useState('sms');
+  const [fallbackContent, setFallbackContent] = useState('');
+
+  const toggleTheme = () => {
+    const newTheme = theme === 'dark' ? 'light' : 'dark';
+    setTheme(newTheme);
+    if (typeof document !== 'undefined') {
+      if (newTheme === 'light') {
+        document.documentElement.classList.add('light');
+      } else {
+        document.documentElement.classList.remove('light');
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      // Default theme is dark
+      document.documentElement.classList.remove('light');
+    }
+  }, []);
 
   // Authentication State
   const [currentUser, setCurrentUser] = useState<UserSession | null>(null);
@@ -665,7 +696,10 @@ export default function Dashboard() {
           segment_id: segment.id,
           channel: targetRec.channel,
           content: targetRec.content,
-          prompt: aiPrompt || "Direct Dashboard Launch"
+          prompt: aiPrompt || "Direct Dashboard Launch",
+          is_journey: isJourney,
+          fallback_channel: isJourney ? fallbackChannel : null,
+          fallback_content: isJourney ? fallbackContent : null
         })
       });
       
@@ -1283,7 +1317,7 @@ export default function Dashboard() {
                     </div>
 
                     {drawerLoading ? (
-                      <div className="py-20 flex flex-col items-center justify-center gap-3 text-zinc-500">
+                  <div className="py-20 flex flex-col items-center justify-center gap-3 text-zinc-500">
                         <RefreshCw size={24} className="animate-spin text-violet-400" />
                         <span className="text-xs font-semibold">Compiling shopper history...</span>
                       </div>
@@ -1299,20 +1333,53 @@ export default function Dashboard() {
                             </span>
                           </div>
                           <div>
+                            <span className="text-[9px] text-zinc-500 block uppercase font-bold tracking-wider">Engagement Status</span>
+                            <span className={`inline-block mt-1.5 px-2 py-0.5 rounded-full border text-[9px] font-bold uppercase tracking-wider ${
+                              selectedCustomer.engagement_status === "Hot" 
+                                ? "bg-red-500/10 text-red-300 border-red-500/20" 
+                                : selectedCustomer.engagement_status === "Warm"
+                                  ? "bg-amber-500/10 text-amber-300 border-amber-500/20"
+                                  : "bg-blue-500/10 text-blue-300 border-blue-500/20"
+                            }`}>
+                              {selectedCustomer.engagement_status || "Cold"} ({selectedCustomer.engagement_score ?? 0.0})
+                            </span>
+                          </div>
+                          <div>
                             <span className="text-[9px] text-zinc-500 block uppercase font-bold tracking-wider">Interest Category</span>
                             <span className="inline-block mt-1.5 px-2.5 py-0.5 rounded-full border text-[9px] font-semibold bg-white/[0.02] border-white/[0.05] text-zinc-300">
                               {selectedCustomer.metadata?.preferred_category || "Unassigned"}
                             </span>
                           </div>
                           <div>
+                            <span className="text-[9px] text-zinc-500 block uppercase font-bold tracking-wider">Region / City</span>
+                            <span className="text-[10px] text-zinc-300 mt-1 block">{selectedCustomer.metadata?.city || "Unknown"}</span>
+                          </div>
+                          <div>
                             <span className="text-[9px] text-zinc-500 block uppercase font-bold tracking-wider">Mobile Number</span>
                             <span className="text-[10px] text-zinc-300 font-mono mt-1 block">{selectedCustomer.phone || "No Number"}</span>
                           </div>
                           <div>
-                            <span className="text-[9px] text-zinc-500 block uppercase font-bold tracking-wider">Region / City</span>
-                            <span className="text-[10px] text-zinc-300 mt-1 block">{selectedCustomer.metadata?.city || "Unknown"}</span>
+                            <span className="text-[9px] text-zinc-500 block uppercase font-bold tracking-wider">Peak Hour</span>
+                            <span className="text-[10px] text-zinc-300 mt-1 block">
+                              {selectedCustomer.metadata?.peak_engagement_hour 
+                                ? `${selectedCustomer.metadata.peak_engagement_hour > 12 ? selectedCustomer.metadata.peak_engagement_hour - 12 : selectedCustomer.metadata.peak_engagement_hour}:00 ${selectedCustomer.metadata.peak_engagement_hour >= 12 ? 'PM' : 'AM'}` 
+                                : '7:00 PM'}
+                            </span>
                           </div>
                         </div>
+
+                        {/* Churn Risk Flashing Alert */}
+                        {selectedCustomer.churn_risk && (
+                          <div className="p-4 rounded-xl border border-red-500/20 bg-red-950/10 flex items-start gap-3 text-red-200 text-xs font-sans animate-pulse">
+                            <AlertTriangle className="shrink-0 text-red-400 mt-0.5" size={14} />
+                            <div>
+                              <h5 className="font-bold text-[9px] uppercase tracking-wider">⚠️ HIGH CHURN RISK DETECTED</h5>
+                              <p className="mt-1 text-[10px] text-red-300 leading-relaxed">
+                                Shopper has {selectedCustomer.orders.length} orders but zero transaction or campaign responses in the last 60 days. winback recovery recommended.
+                              </p>
+                            </div>
+                          </div>
+                        )}
 
                         {/* AI Intelligence Stats Card */}
                         <div className="p-4 rounded-xl border border-violet-500/20 bg-violet-950/10 space-y-3">
@@ -1321,8 +1388,8 @@ export default function Dashboard() {
                             <span className="text-[10px] font-bold uppercase tracking-wider font-sans">AI Shopper Intelligence insights</span>
                           </div>
                           <div className="space-y-2 text-[11px] text-violet-200 leading-relaxed font-sans">
-                            <p>🎯 <strong>Recommended Next Action:</strong> Deploy {selectedCustomer.metadata?.preferred_category === "Coffee" ? "beans refresh coupon" : "new styles catalog"} via <strong>WhatsApp</strong>.</p>
-                            <p>📊 <strong>Churn Likelihood:</strong> {selectedCustomer.orders.length === 0 ? "⚠️ High Churn Risk" : selectedCustomer.orders.length > 2 ? "🟢 Low Risk (VIP Retained)" : "🟡 Medium Risk"}</p>
+                            <p>🎯 <strong>Channel Affinity:</strong> Optimal engagement channel is <strong>{(selectedCustomer.metadata?.preferred_channel || "whatsapp").toUpperCase()}</strong>.</p>
+                            <p>📊 <strong>Churn Likelihood:</strong> {selectedCustomer.churn_risk ? "⚠️ High Churn Risk" : selectedCustomer.orders.length > 2 ? "🟢 Low Risk (VIP Retained)" : "🟡 Medium Risk"}</p>
                           </div>
                         </div>
 
@@ -1538,6 +1605,13 @@ export default function Dashboard() {
                   className="text-[10px] font-bold text-zinc-500 hover:text-zinc-300 border border-white/[0.04] bg-white/[0.01] px-2.5 py-1 rounded-lg cursor-pointer"
                 >
                   Landing Preview
+                </button>
+                <button 
+                  onClick={toggleTheme}
+                  className="p-1 rounded-lg border border-border bg-card text-foreground cursor-pointer flex items-center justify-center hover:bg-white/[0.04] transition"
+                  title={theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode"}
+                >
+                  {theme === "dark" ? <Sun size={11} className="text-amber-400" /> : <Moon size={11} className="text-violet-400" />}
                 </button>
                 <div className="flex items-center gap-1.5 text-[10px] bg-zinc-900/80 px-2.5 py-1 rounded-full border border-white/[0.03] text-zinc-400 font-semibold">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
@@ -1917,6 +1991,30 @@ export default function Dashboard() {
                                       {aiRecommendation.explanation}
                                     </p>
                                   </div>
+
+                                  {aiRecommendation.recommended_send_time && (
+                                    <div className="p-2.5 bg-violet-950/10 rounded-xl border border-violet-500/10 space-y-1 font-sans">
+                                      <div className="flex items-center gap-1.5 text-violet-300">
+                                        <Clock size={11} />
+                                        <span className="text-[9px] font-bold uppercase tracking-wider">AI Send-Time Optimizer</span>
+                                      </div>
+                                      <p className="text-[10px] text-violet-200">
+                                        AI recommends scheduling at <strong>{aiRecommendation.recommended_send_time}</strong>.
+                                      </p>
+                                    </div>
+                                  )}
+                                  
+                                  {aiRecommendation.channel_affinity && (
+                                    <div className="p-2.5 bg-emerald-950/10 rounded-xl border border-emerald-500/10 space-y-1 font-sans">
+                                      <div className="flex items-center gap-1.5 text-emerald-300">
+                                        <TrendingUp size={11} />
+                                        <span className="text-[9px] font-bold uppercase tracking-wider">Channel Affinity</span>
+                                      </div>
+                                      <p className="text-[10px] text-emerald-200">
+                                        Highest response cohort rate detected on: <strong>{aiRecommendation.channel_affinity.toUpperCase()}</strong>.
+                                      </p>
+                                    </div>
+                                  )}
                                 </div>
                               </div>
 
@@ -1936,6 +2034,98 @@ export default function Dashboard() {
                                 </div>
                               </div>
 
+                            </div>
+
+                            {/* Journey Builder Drip Canvas */}
+                            <div className="mt-6 p-5 rounded-xl bg-zinc-950/40 border border-white/[0.04] space-y-4">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <LayersIcon className="text-violet-400 animate-pulse" size={14} />
+                                  <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-300">Multi-Step Drip Journey Builder</span>
+                                </div>
+                                
+                                <label className="flex items-center gap-2 cursor-pointer select-none">
+                                  <span className="text-[10px] text-zinc-500 font-bold uppercase">Activate Drip Flow</span>
+                                  <div 
+                                    onClick={() => {
+                                      setIsJourney(!isJourney);
+                                      if (!fallbackContent) {
+                                        setFallbackContent(`Hey! We noticed you missed our message on ${aiRecommendation.channel}. Here is your special offer: 15% off with code FLASH15! Shop now: https://xeno.com/flash`);
+                                      }
+                                    }}
+                                    className={`w-8 h-4 rounded-full p-0.5 transition duration-200 ${isJourney ? 'bg-violet-500' : 'bg-zinc-800'}`}
+                                  >
+                                    <div className={`w-3 h-3 rounded-full bg-white transition duration-200 transform ${isJourney ? 'translate-x-4' : 'translate-x-0'}`} />
+                                  </div>
+                                </label>
+                              </div>
+                              
+                              {isJourney ? (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2 font-sans">
+                                  <div className="space-y-4">
+                                    <div>
+                                      <span className="text-[10px] text-zinc-500 block mb-1">Fallback Channel (If unopened after 24h):</span>
+                                      <select 
+                                        value={fallbackChannel}
+                                        onChange={(e) => setFallbackChannel(e.target.value)}
+                                        className="w-full px-3 py-1.5 rounded-xl border border-white/[0.05] bg-[#030303] text-xs font-semibold text-zinc-200 focus:outline-none focus:border-violet-500/50"
+                                      >
+                                        <option value="sms">SMS text message</option>
+                                        <option value="whatsapp">WhatsApp chat bubble</option>
+                                        <option value="rcs">RCS rich message card</option>
+                                        <option value="email">Email catalog catalogue</option>
+                                      </select>
+                                    </div>
+                                    
+                                    <div>
+                                      <span className="text-[10px] text-zinc-500 block mb-1">Fallback Message Copy:</span>
+                                      <textarea
+                                        value={fallbackContent}
+                                        onChange={(e) => setFallbackContent(e.target.value)}
+                                        className="w-full h-20 p-3 text-[10px] text-zinc-300 bg-black/40 border border-white/[0.03] rounded-lg focus:outline-none focus:border-violet-500/50 resize-none leading-relaxed"
+                                        placeholder="Compose fallback message..."
+                                      />
+                                    </div>
+                                  </div>
+                                  
+                                  {/* Journey Map SVG Node Canvas */}
+                                  <div className="p-4 rounded-xl border border-white/[0.03] bg-zinc-950/60 flex flex-col justify-center items-center gap-4 min-h-[160px] relative overflow-hidden">
+                                    <span className="text-[8px] text-zinc-650 block uppercase font-bold tracking-wider absolute top-3 left-3">Live Journey Diagram Canvas</span>
+                                    
+                                    <div className="flex items-center gap-2 mt-4 z-10">
+                                      {/* Node 1: Primary */}
+                                      <div className="p-2.5 rounded-xl border border-violet-500/20 bg-violet-950/10 text-center min-w-[90px] shadow-sm">
+                                        <span className="text-[8px] text-zinc-500 block uppercase font-bold">Step 1: Send</span>
+                                        <span className="text-[10px] text-violet-300 font-bold uppercase tracking-wide">{aiRecommendation.channel}</span>
+                                      </div>
+                                      
+                                      {/* Connector Arrow */}
+                                      <div className="flex flex-col items-center justify-center min-w-[70px]">
+                                        <span className="text-[8px] text-zinc-500 font-mono">wait 24h</span>
+                                        <div className="w-full flex items-center justify-center gap-0.5">
+                                          <div className="h-0.5 w-12 bg-zinc-700 border-dashed border-t border-zinc-500" />
+                                          <div className="w-1.5 h-1.5 rounded-full bg-zinc-500 animate-ping" />
+                                        </div>
+                                        <span className="text-[7px] text-red-400 font-bold block mt-0.5">if unopened</span>
+                                      </div>
+                                      
+                                      {/* Node 2: Fallback */}
+                                      <div className="p-2.5 rounded-xl border border-fuchsia-500/20 bg-fuchsia-950/10 text-center min-w-[90px] shadow-sm">
+                                        <span className="text-[8px] text-zinc-500 block uppercase font-bold">Step 2: Fallback</span>
+                                        <span className="text-[10px] text-fuchsia-300 font-bold uppercase tracking-wide">{fallbackChannel}</span>
+                                      </div>
+                                    </div>
+                                    
+                                    <span className="text-[8px] text-zinc-550 mt-2 block font-sans">
+                                      🟢 Live execution loop scheduled on campaign dispatch.
+                                    </span>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="py-2 text-[10px] text-zinc-500 font-sans">
+                                  Drip Flow deactivated. Campaign will deploy as a single-blast broadcast campaign.
+                                </div>
+                              )}
                             </div>
 
                             <div className="flex justify-end pt-4 border-t border-white/[0.04]">
@@ -2381,13 +2571,27 @@ export default function Dashboard() {
                                     <span className="text-[10px] text-zinc-500 block">{c.email}</span>
                                   </div>
                                 </div>
-                                <span className={`text-[8px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
-                                  tier === "VIP" ? "bg-fuchsia-500/10 text-fuchsia-300 border-fuchsia-500/20" :
-                                  tier === "Gold" ? "bg-amber-500/10 text-amber-300 border-amber-500/20" :
-                                  "bg-zinc-800 text-zinc-400 border-zinc-700/20"
-                                }`}>
-                                  {tier}
-                                </span>
+                                <div className="flex flex-col items-end gap-1.5">
+                                  <span className={`text-[8px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                                    tier === "VIP" ? "bg-fuchsia-500/10 text-fuchsia-300 border-fuchsia-500/20" :
+                                    tier === "Gold" ? "bg-amber-500/10 text-amber-300 border-amber-500/20" :
+                                    "bg-zinc-800 text-zinc-400 border-zinc-700/20"
+                                  }`}>
+                                    {tier}
+                                  </span>
+                                  <span className={`text-[7px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full border ${
+                                    c.engagement_status === "Hot" ? "bg-red-500/10 text-red-300 border-red-500/20" :
+                                    c.engagement_status === "Warm" ? "bg-amber-500/10 text-amber-300 border-amber-500/20" :
+                                    "bg-blue-500/10 text-blue-300 border-blue-500/20"
+                                  }`}>
+                                    {c.engagement_status || "Cold"}
+                                  </span>
+                                  {c.churn_risk && (
+                                    <span className="text-[6px] font-extrabold uppercase bg-red-900/40 text-red-300 border border-red-500/20 px-1 py-0.5 rounded-sm animate-pulse">
+                                      At Churn Risk
+                                    </span>
+                                  )}
+                                </div>
                               </div>
 
                               {/* Spent details progress bar */}
@@ -2456,6 +2660,18 @@ export default function Dashboard() {
                                         "bg-zinc-800 text-zinc-400 border-zinc-700/20"
                                       }`}>
                                         {c.metadata.loyalty_tier}
+                                      </span>
+                                    )}
+                                    <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-[7px] font-bold border uppercase tracking-wider ${
+                                      c.engagement_status === "Hot" ? "bg-red-500/10 text-red-300 border-red-500/20" :
+                                      c.engagement_status === "Warm" ? "bg-amber-500/10 text-amber-300 border-amber-500/20" :
+                                      "bg-blue-500/10 text-blue-300 border-blue-500/20"
+                                    }`}>
+                                      {c.engagement_status || "Cold"}
+                                    </span>
+                                    {c.churn_risk && (
+                                      <span className="ml-1.5 text-[6px] font-extrabold uppercase bg-red-950/80 text-red-400 border border-red-500/25 px-1.5 py-0.5 rounded animate-pulse">
+                                        Risk
                                       </span>
                                     )}
                                   </td>

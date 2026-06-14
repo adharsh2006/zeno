@@ -54,13 +54,28 @@ def ingest_data(
             if not customer and cust_data.phone:
                 customer = db.query(Customer).filter(Customer.phone == cust_data.phone).first()
                 
+            import random
+            meta = dict(cust_data.metadata or {})
+            if "peak_engagement_hour" not in meta:
+                meta["peak_engagement_hour"] = random.randint(8, 21)
+            if "preferred_channel" not in meta:
+                category = meta.get("preferred_category", "").lower()
+                if category == "coffee":
+                    meta["preferred_channel"] = "whatsapp"
+                elif category == "fashion":
+                    meta["preferred_channel"] = "rcs"
+                elif category == "electronics":
+                    meta["preferred_channel"] = "email"
+                else:
+                    meta["preferred_channel"] = random.choice(["whatsapp", "sms", "email", "rcs"])
+            
             if not customer:
                 customer = Customer(
                     email=cust_data.email,
                     phone=cust_data.phone,
                     first_name=cust_data.first_name,
                     last_name=cust_data.last_name,
-                    metadata_fields=cust_data.metadata
+                    metadata_fields=meta
                 )
                 db.add(customer)
                 db.flush() # Populate ID
@@ -69,10 +84,9 @@ def ingest_data(
                 # Update attributes
                 if cust_data.first_name: customer.first_name = cust_data.first_name
                 if cust_data.last_name: customer.last_name = cust_data.last_name
-                if cust_data.metadata:
-                    merged_meta = dict(customer.metadata_fields or {})
-                    merged_meta.update(cust_data.metadata)
-                    customer.metadata_fields = merged_meta
+                merged_meta = dict(customer.metadata_fields or {})
+                merged_meta.update(meta)
+                customer.metadata_fields = merged_meta
             
             # Ingest orders
             for ord_data in cust_data.orders:
@@ -119,9 +133,40 @@ def get_customers(
     """Fetch customer list with order summaries"""
     customers = db.query(Customer).offset(skip).limit(limit).all()
     results = []
+    from app.models.campaign import Message
+    from datetime import datetime, timedelta
+    
     for c in customers:
         orders = db.query(Order).filter(Order.customer_id == c.id).all()
         total_spend = sum(o.amount for o in orders)
+        messages = db.query(Message).filter(Message.customer_id == c.id).all()
+        
+        # Dynamic Engagement calculation
+        total_tp = len(messages)
+        if total_tp == 0:
+            engagement_status = "Warm" if len(orders) > 0 else "Cold"
+            engagement_score = 0.35 if len(orders) > 0 else 0.0
+        else:
+            opens = sum(1 for m in messages if m.status in ["opened", "read", "clicked", "converted"])
+            clicks = sum(1 for m in messages if m.status in ["clicked", "converted"])
+            conversions = sum(1 for m in messages if m.status == "converted")
+            open_rate = opens / total_tp
+            click_rate = clicks / total_tp
+            conv_rate = conversions / total_tp
+            
+            engagement_score = (open_rate * 0.3) + (click_rate * 0.4) + (conv_rate * 0.3)
+            if engagement_score >= 0.5 or conversions >= 1:
+                engagement_status = "Hot"
+            elif engagement_score >= 0.15:
+                engagement_status = "Warm"
+            else:
+                engagement_status = "Cold"
+                
+        # Churn risk check (2+ orders and 0 orders in last 60 days)
+        sixty_days_ago = datetime.utcnow() - timedelta(days=60)
+        has_recent_orders = any(o.order_date >= sixty_days_ago for o in orders)
+        churn_risk = len(orders) >= 2 and not has_recent_orders
+
         results.append({
             "id": str(c.id),
             "email": c.email,
@@ -131,7 +176,10 @@ def get_customers(
             "metadata": c.metadata_fields,
             "order_count": len(orders),
             "total_spend": float(total_spend),
-            "created_at": c.created_at
+            "created_at": c.created_at,
+            "engagement_status": engagement_status,
+            "engagement_score": round(engagement_score, 2),
+            "churn_risk": churn_risk
         })
     return results
 
@@ -184,6 +232,43 @@ def get_customer_details(
             "order_date": o.order_date
         })
 
+    # Dynamic calculations for detail drawer
+    total_tp = len(touchpoints)
+    if total_tp == 0:
+        engagement_status = "Warm" if len(orders) > 0 else "Cold"
+        engagement_score = 0.35 if len(orders) > 0 else 0.0
+    else:
+        opens = sum(1 for m in touchpoints if m["status"] in ["opened", "read", "clicked", "converted"])
+        clicks = sum(1 for m in touchpoints if m["status"] in ["clicked", "converted"])
+        conversions = sum(1 for m in touchpoints if m["status"] == "converted")
+        open_rate = opens / total_tp
+        click_rate = clicks / total_tp
+        conv_rate = conversions / total_tp
+        
+        engagement_score = (open_rate * 0.3) + (click_rate * 0.4) + (conv_rate * 0.3)
+        if engagement_score >= 0.5 or conversions >= 1:
+            engagement_status = "Hot"
+        elif engagement_score >= 0.15:
+            engagement_status = "Warm"
+        else:
+            engagement_status = "Cold"
+            
+    from datetime import datetime, timedelta
+    sixty_days_ago = datetime.utcnow() - timedelta(days=60)
+    has_recent_orders = False
+    for o in orders_list:
+        o_date = o["order_date"]
+        if isinstance(o_date, str):
+            try:
+                o_date = datetime.fromisoformat(o_date.replace("Z", "+00:00"))
+            except Exception:
+                o_date = datetime.utcnow()
+        if o_date.replace(tzinfo=None) >= sixty_days_ago:
+            has_recent_orders = True
+            break
+            
+    churn_risk = len(orders) >= 2 and not has_recent_orders
+
     return {
         "id": str(customer.id),
         "email": customer.email,
@@ -193,6 +278,9 @@ def get_customer_details(
         "metadata": customer.metadata_fields,
         "created_at": customer.created_at,
         "orders": orders_list,
-        "touchpoints": touchpoints
+        "touchpoints": touchpoints,
+        "engagement_status": engagement_status,
+        "engagement_score": round(engagement_score, 2),
+        "churn_risk": churn_risk
     }
 

@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String, DateTime, ForeignKey, func, Text
+from sqlalchemy import Column, String, DateTime, ForeignKey, func, Text, Boolean
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from app.core.database import Base
@@ -25,6 +25,9 @@ class Campaign(Base):
     segment_id = Column(UUID(as_uuid=True), ForeignKey("segments.id", ondelete="SET NULL"), nullable=True)
     prompt = Column(Text, nullable=True) # AI instruction used to formulate campaign
     status = Column(String, default="draft") # draft, sending, completed, failed
+    is_journey = Column(Boolean, default=False)
+    fallback_channel = Column(String, nullable=True)
+    fallback_content = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
