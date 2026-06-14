@@ -217,19 +217,28 @@ export default function Dashboard() {
       headers.set("Content-Type", "application/json");
     }
     
-    const res = await fetch(`${BACKEND_URL}${path}`, {
-      ...options,
-      headers
-    });
-    
-    if (res.status === 401) {
-      // Clear expired / invalid token automatically
-      localStorage.removeItem("xeno_token");
-      setCurrentUser(null);
-      setToken(null);
-      showToast("Session expired. Please log in again.", "info");
+    try {
+      const res = await fetch(`${BACKEND_URL}${path}`, {
+        ...options,
+        headers
+      });
+      
+      if (res.status === 401) {
+        // Clear expired / invalid token automatically
+        localStorage.removeItem("xeno_token");
+        setCurrentUser(null);
+        setToken(null);
+        showToast("Session expired. Please log in again.", "info");
+      }
+      return res;
+    } catch (err) {
+      console.warn("apiFetch connection error (backend may be reloading):", err);
+      return {
+        ok: false,
+        status: 503,
+        json: async () => ({ detail: "Backend server currently unreachable." })
+      } as Response;
     }
-    return res;
   };
 
   // Restore session on startup
