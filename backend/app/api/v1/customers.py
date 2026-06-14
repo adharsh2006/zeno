@@ -123,3 +123,61 @@ def get_customers(skip: int = 0, limit: int = 50, db: Session = Depends(get_db))
             "created_at": c.created_at
         })
     return results
+
+@router.get("/{customer_id}")
+def get_customer_details(customer_id: str, db: Session = Depends(get_db)):
+    """Fetch complete customer detail profile with order history and message touchpoints"""
+    import uuid
+    try:
+        cust_uuid = uuid.UUID(customer_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid customer ID format")
+
+    customer = db.query(Customer).filter(Customer.id == cust_uuid).first()
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    orders = db.query(Order).filter(Order.customer_id == cust_uuid).order_by(Order.order_date.desc()).all()
+    
+    # Query messages joined with campaigns
+    from app.models.campaign import Message, Campaign
+    messages_query = db.query(Message, Campaign.name.label("campaign_name")).outerjoin(
+        Campaign, Message.campaign_id == Campaign.id
+    ).filter(Message.customer_id == cust_uuid).order_by(Message.created_at.desc()).all()
+
+    touchpoints = []
+    for msg, camp_name in messages_query:
+        touchpoints.append({
+            "id": str(msg.id),
+            "campaign_id": str(msg.campaign_id),
+            "campaign_name": camp_name or "Unknown Campaign",
+            "channel": msg.channel,
+            "recipient": msg.recipient,
+            "content": msg.content,
+            "status": msg.status,
+            "error_message": msg.error_message,
+            "created_at": msg.created_at
+        })
+
+    orders_list = []
+    for o in orders:
+        orders_list.append({
+            "id": str(o.id),
+            "amount": float(o.amount),
+            "items": o.items,
+            "status": o.status,
+            "order_date": o.order_date
+        })
+
+    return {
+        "id": str(customer.id),
+        "email": customer.email,
+        "phone": customer.phone,
+        "first_name": customer.first_name,
+        "last_name": customer.last_name,
+        "metadata": customer.metadata_fields,
+        "created_at": customer.created_at,
+        "orders": orders_list,
+        "touchpoints": touchpoints
+    }
+
