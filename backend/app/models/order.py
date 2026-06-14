@@ -7,7 +7,7 @@ from app.core.database import Base
 class Order(Base):
     __tablename__ = "orders"
 
-    id = Column(UUID(as_uuid=True), primary key=True, default=uuid.uuid4)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     customer_id = Column(UUID(as_uuid=True), ForeignKey("customers.id", ondelete="CASCADE"), nullable=False)
     amount = Column(Numeric(10, 2), nullable=False)
     items = Column(JSONB, default=list) # [{product_id, name, qty, price, category}]

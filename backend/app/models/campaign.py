@@ -7,7 +7,7 @@ from app.core.database import Base
 class Segment(Base):
     __tablename__ = "segments"
 
-    id = Column(UUID(as_uuid=True), primary key=True, default=uuid.uuid4)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     rules = Column(JSONB, default=dict) # E.g., {"min_spend": 100, "days_inactive": 30}
@@ -20,7 +20,7 @@ class Segment(Base):
 class Campaign(Base):
     __tablename__ = "campaigns"
 
-    id = Column(UUID(as_uuid=True), primary key=True, default=uuid.uuid4)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String, nullable=False)
     segment_id = Column(UUID(as_uuid=True), ForeignKey("segments.id", ondelete="SET NULL"), nullable=True)
     prompt = Column(Text, nullable=True) # AI instruction used to formulate campaign
@@ -34,7 +34,7 @@ class Campaign(Base):
 class Message(Base):
     __tablename__ = "messages"
 
-    id = Column(UUID(as_uuid=True), primary key=True, default=uuid.uuid4)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     campaign_id = Column(UUID(as_uuid=True), ForeignKey("campaigns.id", ondelete="CASCADE"), nullable=False)
     customer_id = Column(UUID(as_uuid=True), ForeignKey("customers.id", ondelete="CASCADE"), nullable=False)
     channel = Column(String, nullable=False) # whatsapp, sms, email, rcs
@@ -52,7 +52,7 @@ class Message(Base):
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 
-    id = Column(UUID(as_uuid=True), primary key=True, default=uuid.uuid4)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     action = Column(String, nullable=False) # E.g., INGEST, CAMPAIGN_START, WEBHOOK_CALLBACK
     actor = Column(String, default="system") # system, user, ai_agent
     details = Column(JSONB, default=dict)
