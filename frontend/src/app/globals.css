@@ -472,4 +472,153 @@ body {
   background: radial-gradient(circle, rgba(109, 40, 217, 0.02) 0%, rgba(99, 102, 241, 0.005) 40%, transparent 70%);
 }
 
+/* Light Theme Tailwind Utility Class Overrides */
+.light,
+.light body,
+.light .flex-1.bg-\[\#040406\],
+.light .bg-\[\#040406\],
+.light .bg-\[\#030303\],
+.light .bg-\[\#0c0c0e\],
+.light .bg-\[\#08080a\],
+.light .bg-zinc-950,
+.light .bg-zinc-900,
+.light .bg-black,
+.light .bg-zinc-950\/20,
+.light .bg-zinc-950\/30,
+.light .bg-zinc-950\/40,
+.light .bg-zinc-950\/60,
+.light .bg-zinc-900\/40,
+.light .bg-zinc-900\/80,
+.light .bg-zinc-900\/20,
+.light .bg-black\/25,
+.light .bg-black\/45,
+.light .bg-white\/\[0\.01\],
+.light .bg-white\/\[0\.02\] {
+  background-color: var(--background) !important;
+  color: var(--foreground) !important;
+}
 
+/* Glass panel and cards in light mode */
+.light .glass-panel,
+.light .spotlight-card,
+.light .bg-\[\#0c0c0e\],
+.light .bg-zinc-900\/60 {
+  background-color: rgba(255, 255, 255, 0.8) !important;
+  backdrop-filter: blur(16px) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+  border-color: rgba(15, 23, 42, 0.08) !important;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.03) !important;
+}
+
+/* Inputs and interactive elements in light mode */
+.light input,
+.light select,
+.light textarea {
+  background-color: #ffffff !important;
+  border-color: rgba(15, 23, 42, 0.12) !important;
+  color: #0f172a !important;
+}
+
+.light input::placeholder {
+  color: #94a3b8 !important;
+}
+
+.light input:focus,
+.light select:focus,
+.light textarea:focus {
+  border-color: #6d28d9 !important;
+}
+
+/* Card feature grids */
+.light .border-white\/\[0\.03\],
+.light .border-white\/\[0\.04\],
+.light .border-white\/\[0\.05\],
+.light .border-white\/\[0\.08\],
+.light .border-zinc-800,
+.light .border-zinc-700\/20,
+.light .border-zinc-700\/30,
+.light .border-t.border-white\/\[0\.03\] {
+  border-color: rgba(15, 23, 42, 0.08) !important;
+}
+
+/* Typography overrides */
+.light .text-zinc-100,
+.light .text-zinc-200,
+.light .text-zinc-300,
+.light .text-zinc-400,
+.light .text-white,
+.light .text-zinc-300.hover\:text-white:hover {
+  color: #0f172a !important;
+}
+
+.light .text-zinc-500,
+.light .text-zinc-600 {
+  color: #64748b !important;
+}
+
+/* Navigation items */
+.light a {
+  color: #475569 !important;
+}
+
+.light a:hover {
+  color: #0f172a !important;
+}
+
+/* Dark components inside Light Mode */
+.light .terminal-window,
+.light .terminal-window * {
+  background-color: #0f172a !important;
+  color: #f8fafc !important;
+}
+
+.light .phone-shell {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+}
+
+.light .phone-shell * {
+  color: inherit !important;
+}
+
+.light .sms-bubble {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+}
+
+.light .whatsapp-bubble {
+  background-color: #25d366 !important;
+  color: #ffffff !important;
+}
+
+.light .whatsapp-bubble::after {
+  border-left-color: #25d366 !important;
+  border-bottom-color: #25d366 !important;
+}
+
+/* Adjust gradients for text */
+.light .mesh-gradient-text {
+  background: linear-gradient(135deg, #1e1b4b 0%, #6d28d9 60%, #db2777 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.light .text-glow {
+  text-shadow: none !important;
+}
+
+.light .border-beam {
+  background: linear-gradient(rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.8)) padding-box,
+              linear-gradient(90deg, #7c3aed, #4f46e5, #db2777, #7c3aed) border-box;
+}
+
+/* Fix chart colors */
+.light .recharts-cartesian-grid-horizontal line,
+.light .recharts-cartesian-grid-vertical line {
+  stroke: rgba(15, 23, 42, 0.08) !important;
+}
+
+.light .recharts-text {
+  fill: #64748b !important;
+}

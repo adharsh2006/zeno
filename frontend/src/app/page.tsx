@@ -825,7 +825,18 @@ export default function Dashboard() {
 
       {/* SECURE PORTAL USER AUTHENTICATION SCREEN */}
       {!currentUser ? (
-        <div className="flex-1 flex flex-col items-center justify-center p-6 z-30 font-sans min-h-screen">
+        <div className="flex-1 flex flex-col items-center justify-center p-6 z-30 font-sans min-h-screen relative">
+          {/* Floating theme toggle for Auth Portal */}
+          <div className="absolute top-6 right-6 z-50">
+            <button 
+              onClick={toggleTheme}
+              className="p-2.5 rounded-xl border border-white/[0.05] bg-black/25 text-zinc-400 cursor-pointer flex items-center justify-center hover:bg-white/[0.04] transition"
+              title={theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode"}
+            >
+              {theme === "dark" ? <Sun size={14} className="text-amber-400" /> : <Moon size={14} className="text-violet-400" />}
+            </button>
+          </div>
+
           <div className="w-full max-w-md p-8 rounded-2xl glass-panel border border-white/[0.04] shadow-2xl space-y-6 relative overflow-hidden">
             <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-tr from-violet-600/10 to-indigo-600/10 blur-xl -z-10" />
             
@@ -985,6 +996,14 @@ export default function Dashboard() {
                 }`}
               >
                 Glow: {cursorGlowEnabled ? "ON" : "OFF"}
+              </button>
+
+              <button 
+                onClick={toggleTheme}
+                className="p-2.5 rounded-xl border border-white/[0.05] bg-black/25 text-zinc-400 cursor-pointer flex items-center justify-center hover:bg-white/[0.04] transition"
+                title={theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode"}
+              >
+                {theme === "dark" ? <Sun size={12} className="text-amber-400" /> : <Moon size={12} className="text-violet-400" />}
               </button>
               
               <button 
