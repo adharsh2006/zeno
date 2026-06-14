@@ -7,6 +7,7 @@ from app.core.database import get_db
 from app.models.customer import Customer
 from app.models.order import Order
 from app.models.campaign import AuditLog
+from app.core.security import get_current_user, RoleChecker
 import logging
 import json
 
@@ -31,7 +32,12 @@ class IngestRequest(BaseModel):
     customers: List[CustomerIngestSchema]
 
 @router.post("/ingest", status_code=status.HTTP_201_CREATED)
-def ingest_data(payload: IngestRequest, db: Session = Depends(get_db)):
+def ingest_data(
+    payload: IngestRequest, 
+    db: Session = Depends(get_db),
+    current_user = Depends(RoleChecker(["admin"]))
+):
+
     """Bulk ingestion of shoppers and their purchase history"""
     customers_added = 0
     orders_added = 0
@@ -104,7 +110,12 @@ def ingest_data(payload: IngestRequest, db: Session = Depends(get_db)):
         )
 
 @router.get("/")
-def get_customers(skip: int = 0, limit: int = 50, db: Session = Depends(get_db)):
+def get_customers(
+    skip: int = 0, 
+    limit: int = 50, 
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
     """Fetch customer list with order summaries"""
     customers = db.query(Customer).offset(skip).limit(limit).all()
     results = []
@@ -125,7 +136,11 @@ def get_customers(skip: int = 0, limit: int = 50, db: Session = Depends(get_db))
     return results
 
 @router.get("/{customer_id}")
-def get_customer_details(customer_id: str, db: Session = Depends(get_db)):
+def get_customer_details(
+    customer_id: str, 
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
     """Fetch complete customer detail profile with order history and message touchpoints"""
     import uuid
     try:

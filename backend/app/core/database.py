@@ -24,4 +24,6 @@ def init_db():
     from app.models.customer import Customer
     from app.models.order import Order
     from app.models.campaign import Segment, Campaign, Message, AuditLog
+    from app.models.user import User
     Base.metadata.create_all(bind=engine)
+

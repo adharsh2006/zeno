@@ -9,8 +9,10 @@ from app.models.campaign import Segment, Campaign, Message, AuditLog
 from app.services.segment_engine import segment_engine
 from app.services.channel_client import channel_client
 from app.services.agents_service import agents_service
+from app.core.security import get_current_user, RoleChecker
 import logging
 import asyncio
+
 
 router = APIRouter()
 logger = logging.getLogger("backend.api.campaigns")
@@ -115,7 +117,11 @@ async def execute_campaign_dispatch(campaign_id: str, channel: str, content: str
 
 # Routes
 @router.post("/segments", status_code=status.HTTP_201_CREATED)
-def create_segment(payload: SegmentCreate, db: Session = Depends(get_db)):
+def create_segment(
+    payload: SegmentCreate, 
+    db: Session = Depends(get_db),
+    current_user = Depends(RoleChecker(["admin", "marketer"]))
+):
     segment = Segment(
         name=payload.name,
         description=payload.description,
@@ -128,11 +134,18 @@ def create_segment(payload: SegmentCreate, db: Session = Depends(get_db)):
     return segment
 
 @router.get("/segments")
-def list_segments(db: Session = Depends(get_db)):
+def list_segments(
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
     return db.query(Segment).all()
 
 @router.post("/create", status_code=status.HTTP_201_CREATED)
-def create_campaign(payload: CampaignCreate, db: Session = Depends(get_db)):
+def create_campaign(
+    payload: CampaignCreate, 
+    db: Session = Depends(get_db),
+    current_user = Depends(RoleChecker(["admin", "marketer"]))
+):
     # Verify segment exists
     segment = db.query(Segment).filter(Segment.id == payload.segment_id).first()
     if not segment:
@@ -164,7 +177,10 @@ def create_campaign(payload: CampaignCreate, db: Session = Depends(get_db)):
     }
 
 @router.get("/")
-def list_campaigns(db: Session = Depends(get_db)):
+def list_campaigns(
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
     campaigns = db.query(Campaign).all()
     results = []
     for c in campaigns:
@@ -196,7 +212,13 @@ def list_campaigns(db: Session = Depends(get_db)):
     return results
 
 @router.post("/{id}/send")
-def send_campaign(id: UUID4, payload: Dict[str, Any], background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+def send_campaign(
+    id: UUID4, 
+    payload: Dict[str, Any], 
+    background_tasks: BackgroundTasks, 
+    db: Session = Depends(get_db),
+    current_user = Depends(RoleChecker(["admin", "marketer"]))
+):
     campaign = db.query(Campaign).filter(Campaign.id == id).first()
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
@@ -242,7 +264,10 @@ class RecommendRequest(BaseModel):
     prompt: str
 
 @router.post("/recommend")
-def recommend_campaign(payload: RecommendRequest):
+def recommend_campaign(
+    payload: RecommendRequest,
+    current_user = Depends(RoleChecker(["admin", "marketer"]))
+):
     """Runs the LangGraph orchestration to generate audience, channel, and content recommendations"""
     try:
         recommendations = agents_service.generate_recommendations(payload.prompt)

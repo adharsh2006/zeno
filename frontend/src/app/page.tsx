@@ -30,7 +30,10 @@ import {
   Layers,
   History,
   Activity,
-  Layers as LayersIcon
+  Layers as LayersIcon,
+  Lock,
+  LogOut,
+  UserCheck
 } from "lucide-react";
 import { 
   BarChart, 
@@ -103,11 +106,28 @@ interface AuditLog {
   timestamp: string;
 }
 
+interface UserSession {
+  id: string;
+  username: string;
+  email: string;
+  role: string;
+}
+
 export default function Dashboard() {
   const [showLanding, setShowLanding] = useState(true);
   const [activeTab, setActiveTab] = useState("overview");
   const [loading, setLoading] = useState(false);
   const [seeding, setSeeding] = useState(false);
+
+  // Authentication State
+  const [currentUser, setCurrentUser] = useState<UserSession | null>(null);
+  const [token, setToken] = useState<string | null>(null);
+  const [isRegisterMode, setIsRegisterMode] = useState(false);
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authUsername, setAuthUsername] = useState("");
+  const [authRole, setAuthRole] = useState("viewer");
+  const [loginError, setLoginError] = useState<string | null>(null);
   
   // Dashboard Metrics state
   const [shoppersCount, setShoppersCount] = useState(0);
@@ -155,7 +175,56 @@ export default function Dashboard() {
   // Status message
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
 
-  // Track Mouse Movements
+  // Wrapper for authenticated API fetch requests
+  const apiFetch = async (path: string, options: RequestInit = {}) => {
+    const savedToken = localStorage.getItem("xeno_token");
+    const headers = new Headers(options.headers || {});
+    if (savedToken) {
+      headers.set("Authorization", `Bearer ${savedToken}`);
+    }
+    if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
+      headers.set("Content-Type", "application/json");
+    }
+    
+    const res = await fetch(`${BACKEND_URL}${path}`, {
+      ...options,
+      headers
+    });
+    
+    if (res.status === 401) {
+      // Clear expired / invalid token automatically
+      localStorage.removeItem("xeno_token");
+      setCurrentUser(null);
+      setToken(null);
+      showToast("Session expired. Please log in again.", "info");
+    }
+    return res;
+  };
+
+  // Restore session on startup
+  useEffect(() => {
+    const checkExistingSession = async () => {
+      const savedToken = localStorage.getItem("xeno_token");
+      if (!savedToken) return;
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/v1/auth/me`, {
+          headers: { "Authorization": `Bearer ${savedToken}` }
+        });
+        if (res.ok) {
+          const user = await res.json();
+          setCurrentUser(user);
+          setToken(savedToken);
+        } else {
+          localStorage.removeItem("xeno_token");
+        }
+      } catch (err) {
+        console.error("Session restoration failed", err);
+      }
+    };
+    checkExistingSession();
+  }, []);
+
+  // Track Mouse Movements for Cursor Aura
   useEffect(() => {
     if (!cursorGlowEnabled) return;
     const handleMouseMove = (e: MouseEvent) => {
@@ -178,7 +247,7 @@ export default function Dashboard() {
   // Fetch all backend stats
   const fetchOverviewStats = async () => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/v1/analytics/overview`);
+      const res = await apiFetch("/api/v1/analytics/overview");
       if (res.ok) {
         const data = await res.json();
         setShoppersCount(data.total_shoppers);
@@ -187,7 +256,6 @@ export default function Dashboard() {
         setRecentCampaigns(data.recent_campaigns);
         setConversionRates(data.rates);
         
-        // Formulate Recharts funnel
         const funnel = [
           { name: "Sent", count: data.funnel.sent },
           { name: "Delivered", count: data.funnel.delivered },
@@ -198,7 +266,6 @@ export default function Dashboard() {
         ];
         setFunnelData(funnel);
 
-        // Generate synthetic LTV growth timeline based on recent campaign outcomes
         const ltvTimeline = [
           { date: "May 25", Revenue: Math.max(0, data.total_revenue * 0.4) },
           { date: "May 30", Revenue: Math.max(0, data.total_revenue * 0.55) },
@@ -215,7 +282,7 @@ export default function Dashboard() {
 
   const fetchCampaigns = async () => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/v1/campaigns/`);
+      const res = await apiFetch("/api/v1/campaigns/");
       if (res.ok) {
         const data = await res.json();
         setCampaigns(data);
@@ -227,7 +294,7 @@ export default function Dashboard() {
 
   const fetchCustomers = async () => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/v1/customers/`);
+      const res = await apiFetch("/api/v1/customers/");
       if (res.ok) {
         const data = await res.json();
         setCustomers(data);
@@ -239,7 +306,7 @@ export default function Dashboard() {
 
   const fetchAuditLogs = async () => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/v1/analytics/audit-logs`);
+      const res = await apiFetch("/api/v1/analytics/audit-logs");
       if (res.ok) {
         const data = await res.json();
         setAuditLogs(data);
@@ -254,7 +321,7 @@ export default function Dashboard() {
     setDrawerLoading(true);
     setDrawerOpen(true);
     try {
-      const res = await fetch(`${BACKEND_URL}/api/v1/customers/${customerId}`);
+      const res = await apiFetch(`/api/v1/customers/${customerId}`);
       if (res.ok) {
         const data = await res.json();
         setSelectedCustomer(data);
@@ -281,6 +348,7 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
+    if (!currentUser) return;
     reloadAllData();
     const interval = setInterval(() => {
       fetchOverviewStats();
@@ -288,15 +356,126 @@ export default function Dashboard() {
       fetchAuditLogs();
     }, 4500);
     return () => clearInterval(interval);
-  }, []);
+  }, [currentUser]);
 
   const showToast = (message: string, type: "success" | "error" | "info" = "success") => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 4000);
   };
 
+  // Login handler
+  const handleLogin = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setLoginError(null);
+    setLoading(true);
+    try {
+      const formData = new URLSearchParams();
+      formData.append("username", authEmail);
+      formData.append("password", authPassword);
+
+      const res = await fetch(`${BACKEND_URL}/api/v1/auth/token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: formData.toString()
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        localStorage.setItem("xeno_token", data.access_token);
+        setToken(data.access_token);
+        setCurrentUser(data.user);
+        showToast(`Welcome back, ${data.user.username}!`);
+      } else {
+        const err = await res.json();
+        setLoginError(err.detail || "Authentication failed. Check credentials.");
+      }
+    } catch (err) {
+      setLoginError("Authentication server unreachable.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Register handler
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError(null);
+    setLoading(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: authUsername,
+          email: authEmail,
+          password: authPassword,
+          role: authRole
+        })
+      });
+
+      if (res.ok) {
+        showToast("Registration successful! Please log in.");
+        setIsRegisterMode(false);
+        setAuthPassword("");
+      } else {
+        const err = await res.json();
+        setLoginError(err.detail || "Registration failed.");
+      }
+    } catch (err) {
+      setLoginError("Authentication server unreachable.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Logout handler
+  const handleLogout = () => {
+    localStorage.removeItem("xeno_token");
+    setToken(null);
+    setCurrentUser(null);
+    showToast("Logged out successfully.");
+  };
+
+  // Quick Select Persona Login
+  const loginAsPersona = (email: string) => {
+    setAuthEmail(email);
+    setAuthPassword("password123");
+    setLoading(true);
+    setLoginError(null);
+
+    const formData = new URLSearchParams();
+    formData.append("username", email);
+    formData.append("password", "password123");
+
+    fetch(`${BACKEND_URL}/api/v1/auth/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: formData.toString()
+    })
+    .then(res => {
+      if (res.ok) return res.json();
+      throw new Error("Persona authentication failed.");
+    })
+    .then(data => {
+      localStorage.setItem("xeno_token", data.access_token);
+      setToken(data.access_token);
+      setCurrentUser(data.user);
+      showToast(`Logged in as ${data.user.username} (${data.user.role})!`);
+    })
+    .catch(() => {
+      setLoginError("Failed to authenticate persona.");
+    })
+    .finally(() => {
+      setLoading(false);
+    });
+  };
+
   // Seed DB with mock shopper intelligence data
   const handleSeedData = async () => {
+    if (currentUser?.role !== "admin") {
+      showToast("Access Denied: Only Admins can hydrate data.", "error");
+      return;
+    }
     setSeeding(true);
     showToast("Generating mock shopper profiles and histories...", "info");
     
@@ -368,16 +547,16 @@ export default function Dashboard() {
     };
 
     try {
-      const res = await fetch(`${BACKEND_URL}/api/v1/customers/ingest`, {
+      const res = await apiFetch("/api/v1/customers/ingest", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(mockData)
       });
       if (res.ok) {
         showToast("Database successfully hydrated with D2C profiles!");
         reloadAllData();
       } else {
-        showToast("Failed to seed database.", "error");
+        const err = await res.json();
+        showToast(err.detail || "Failed to seed database.", "error");
       }
     } catch (err) {
       showToast("Ingestion server unreachable.", "error");
@@ -388,13 +567,16 @@ export default function Dashboard() {
 
   // Run LangGraph marketing recommend loops
   const handleGenerateStrategy = async () => {
+    if (currentUser?.role === "viewer") {
+      showToast("Access Denied: Viewers cannot trigger strategist runs.", "error");
+      return;
+    }
     if (!aiPrompt) return;
     setAiLoading(true);
     setAiRecommendation(null);
     setAgentStep(0);
     setAgentLogs(["[System] Initializing autonomous multi-agent compilation graph..."]);
 
-    // Animate agent steps step-by-step
     const logsSequence = [
       { step: 0, text: "[Audience Miner Agent] Analyzing database for target shopper segments..." },
       { step: 0, text: "[Audience Miner Agent] Running cohort analysis on purchase patterns & inactivity..." },
@@ -419,13 +601,11 @@ export default function Dashboard() {
     }, 1200);
 
     try {
-      const res = await fetch(`${BACKEND_URL}/api/v1/campaigns/recommend`, {
+      const res = await apiFetch("/api/v1/campaigns/recommend", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt: aiPrompt })
       });
       
-      // Keep executing visual logs until finished
       setTimeout(async () => {
         if (res.ok) {
           const data = await res.json();
@@ -435,7 +615,8 @@ export default function Dashboard() {
           setAgentStep(4);
           setAgentLogs(prev => [...prev, "[System] Recommendation generated successfully! View strategy board below."]);
         } else {
-          showToast("Agent recommendation engine error.", "error");
+          const err = await res.json();
+          showToast(err.detail || "Agent recommendation engine error.", "error");
           setAgentStep(-1);
         }
         setAiLoading(false);
@@ -450,6 +631,10 @@ export default function Dashboard() {
 
   // Accept Strategy & Dispatch Campaign
   const handleLaunchCampaign = async (customName?: string, overrideRec?: any) => {
+    if (currentUser?.role === "viewer") {
+      showToast("Access Denied: Viewers cannot launch campaigns.", "error");
+      return;
+    }
     const targetRec = overrideRec || aiRecommendation;
     if (!targetRec) return;
     setLaunchingCampaign(true);
@@ -458,9 +643,8 @@ export default function Dashboard() {
     const nameToUse = customName || campaignName;
 
     try {
-      const segRes = await fetch(`${BACKEND_URL}/api/v1/campaigns/segments`, {
+      const segRes = await apiFetch("/api/v1/campaigns/segments", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: `${nameToUse} - Cohort`,
           description: `Segment compiled by AI for prompt: ${aiPrompt || "Direct Dispatch"}`,
@@ -474,9 +658,8 @@ export default function Dashboard() {
       }
       const segment = await segRes.json();
 
-      const campRes = await fetch(`${BACKEND_URL}/api/v1/campaigns/create`, {
+      const campRes = await apiFetch("/api/v1/campaigns/create", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: nameToUse,
           segment_id: segment.id,
@@ -491,9 +674,8 @@ export default function Dashboard() {
       }
       const campaign = await campRes.json();
 
-      const sendRes = await fetch(`${BACKEND_URL}/api/v1/campaigns/${campaign.campaign.id}/send`, {
+      const sendRes = await apiFetch(`/api/v1/campaigns/${campaign.campaign.id}/send`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           channel: targetRec.channel,
           content: targetRec.content
@@ -521,11 +703,14 @@ export default function Dashboard() {
 
   // Launch pre-built campaign draft from Kanban board
   const handleLaunchFromKanban = async (c: Campaign) => {
+    if (currentUser?.role === "viewer") {
+      showToast("Access Denied: Viewers cannot launch campaigns.", "error");
+      return;
+    }
     showToast(`Triggering campaign: ${c.name}`, "info");
     try {
-      const sendRes = await fetch(`${BACKEND_URL}/api/v1/campaigns/${c.id}/send`, {
+      const sendRes = await apiFetch(`/api/v1/campaigns/${c.id}/send`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           channel: "whatsapp",
           content: "Hello from Xeno campaign trigger!"
@@ -535,7 +720,8 @@ export default function Dashboard() {
         showToast("Campaign launched! Updates processing...");
         reloadAllData();
       } else {
-        showToast("Failed to trigger dispatch.", "error");
+        const err = await sendRes.json();
+        showToast(err.detail || "Failed to trigger dispatch.", "error");
       }
     } catch (err) {
       showToast("Connection failed.", "error");
@@ -594,8 +780,135 @@ export default function Dashboard() {
         )}
       </AnimatePresence>
 
-      {/* PRODUCT LANDING PAGE VIEW */}
-      {showLanding ? (
+      {/* SECURE PORTAL USER AUTHENTICATION SCREEN */}
+      {!currentUser ? (
+        <div className="flex-1 flex flex-col items-center justify-center p-6 z-30 font-sans min-h-screen">
+          <div className="w-full max-w-md p-8 rounded-2xl glass-panel border border-white/[0.04] shadow-2xl space-y-6 relative overflow-hidden">
+            <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-tr from-violet-600/10 to-indigo-600/10 blur-xl -z-10" />
+            
+            {/* Logo */}
+            <div className="flex flex-col items-center gap-2 mb-4 text-center">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-violet-600 to-fuchsia-500 flex items-center justify-center font-bold text-zinc-950 shadow-lg relative">
+                <span className="text-white text-sm">X</span>
+              </div>
+              <h2 className="font-extrabold text-lg text-zinc-100 tracking-wider">XENO AI MARKETING CRM</h2>
+              <span className="text-[10px] text-zinc-500 font-mono">Secure Access Gateway</span>
+            </div>
+
+            {/* Error alerts */}
+            {loginError && (
+              <div className="p-3 rounded-lg border border-red-500/20 bg-red-950/10 text-red-400 text-xs font-semibold flex items-center gap-2">
+                <AlertTriangle size={14} />
+                <span>{loginError}</span>
+              </div>
+            )}
+
+            {/* Forms fields */}
+            <form onSubmit={isRegisterMode ? handleRegister : handleLogin} className="space-y-4">
+              {isRegisterMode && (
+                <div className="space-y-1.5">
+                  <label className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">Username</label>
+                  <input
+                    value={authUsername}
+                    onChange={(e) => setAuthUsername(e.target.value)}
+                    required
+                    placeholder="Enter username"
+                    className="w-full px-3.5 py-2.5 bg-black/45 border border-white/[0.05] rounded-xl text-xs text-zinc-200 placeholder-zinc-700 focus:outline-none focus:border-violet-500/50"
+                  />
+                </div>
+              )}
+              
+              <div className="space-y-1.5">
+                <label className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">Email Address</label>
+                <input
+                  type="email"
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  required
+                  placeholder="name@company.com"
+                  className="w-full px-3.5 py-2.5 bg-black/45 border border-white/[0.05] rounded-xl text-xs text-zinc-200 placeholder-zinc-700 focus:outline-none focus:border-violet-500/50"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">Password</label>
+                <input
+                  type="password"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  required
+                  placeholder="••••••••"
+                  className="w-full px-3.5 py-2.5 bg-black/45 border border-white/[0.05] rounded-xl text-xs text-zinc-200 placeholder-zinc-700 focus:outline-none focus:border-violet-500/50"
+                />
+              </div>
+
+              {isRegisterMode && (
+                <div className="space-y-1.5">
+                  <label className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">Default Permissions Role</label>
+                  <select
+                    value={authRole}
+                    onChange={(e) => setAuthRole(e.target.value)}
+                    className="w-full px-3 py-2.5 bg-black/45 border border-white/[0.05] rounded-xl text-xs text-zinc-400 focus:outline-none focus:border-violet-500/50"
+                  >
+                    <option value="viewer">Viewer (Read-Only stats, locked actions)</option>
+                    <option value="marketer">Marketer (Compile & Launch campaigns)</option>
+                    <option value="admin">Administrator (Full accesses & database seeds)</option>
+                  </select>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-2.5 rounded-xl text-xs font-semibold bg-violet-600 hover:bg-violet-500 text-white shadow-lg transition flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {loading ? <RefreshCw size={13} className="animate-spin" /> : isRegisterMode ? "Create Account" : "Access Console"}
+              </button>
+            </form>
+
+            {/* Quick Login Test Personas (Horilla style) */}
+            <div className="border-t border-white/[0.03] pt-4 space-y-3">
+              <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider block text-center">Prefilled Test Persona Shortcuts</span>
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  onClick={() => loginAsPersona("admin@xeno.com")}
+                  className="px-2 py-1.5 rounded bg-zinc-950 border border-white/[0.04] text-[9px] hover:border-violet-500/30 transition text-zinc-300 font-bold flex flex-col items-center gap-0.5"
+                >
+                  <span>Admin</span>
+                  <span className="text-[8px] text-violet-400 font-normal">Full Access</span>
+                </button>
+                <button
+                  onClick={() => loginAsPersona("marketer@xeno.com")}
+                  className="px-2 py-1.5 rounded bg-zinc-950 border border-white/[0.04] text-[9px] hover:border-indigo-500/30 transition text-zinc-300 font-bold flex flex-col items-center gap-0.5"
+                >
+                  <span>Marketer</span>
+                  <span className="text-[8px] text-indigo-400 font-normal">No database seed</span>
+                </button>
+                <button
+                  onClick={() => loginAsPersona("viewer@xeno.com")}
+                  className="px-2 py-1.5 rounded bg-zinc-950 border border-white/[0.04] text-[9px] hover:border-zinc-800 transition text-zinc-300 font-bold flex flex-col items-center gap-0.5"
+                >
+                  <span>Viewer</span>
+                  <span className="text-[8px] text-zinc-500 font-normal">Read-Only</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Switch toggle mode */}
+            <div className="text-center pt-2">
+              <button
+                onClick={() => setIsRegisterMode(!isRegisterMode)}
+                className="text-[10px] text-zinc-500 hover:text-zinc-300 underline"
+              >
+                {isRegisterMode ? "Already registered? Sign In" : "Need a custom role account? Sign Up"}
+              </button>
+            </div>
+
+          </div>
+        </div>
+      ) : showLanding ? (
+        
+        // PRODUCT LANDING PAGE VIEW (Authenticated)
         <div className="flex-1 overflow-y-auto flex flex-col z-20 min-h-screen">
           
           {/* Landing Header */}
@@ -603,7 +916,6 @@ export default function Dashboard() {
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-violet-600 via-indigo-600 to-fuchsia-500 flex items-center justify-center font-bold text-zinc-950 shadow-lg relative cursor-pointer" onClick={() => setShowLanding(false)}>
                 <span className="text-white text-sm">X</span>
-                <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-tr from-violet-500 to-fuchsia-500 opacity-40 blur-sm -z-10" />
               </div>
               <span className="font-extrabold text-sm text-zinc-200 tracking-widest bg-gradient-to-r from-violet-200 to-indigo-300 bg-clip-text text-transparent">XENO</span>
             </div>
@@ -614,6 +926,13 @@ export default function Dashboard() {
             </nav>
 
             <div className="flex items-center gap-4">
+              {/* Active User session block */}
+              <div className="hidden md:flex items-center gap-2 border border-white/[0.04] bg-white/[0.01] px-3 py-1 rounded-xl text-[10px] font-semibold">
+                <UserCheck size={11} className="text-violet-400" />
+                <span className="text-zinc-300">{currentUser.username}</span>
+                <span className="px-1.5 py-0.2 rounded bg-violet-500/10 text-violet-300 text-[8px] uppercase tracking-wider">{currentUser.role}</span>
+              </div>
+
               <button 
                 onClick={() => setCursorGlowEnabled(!cursorGlowEnabled)}
                 className={`text-[10px] font-semibold px-3 py-1.5 rounded-lg border transition ${
@@ -622,8 +941,9 @@ export default function Dashboard() {
                     : "bg-zinc-900 border-zinc-800 text-zinc-500"
                 }`}
               >
-                Cursor Glow: {cursorGlowEnabled ? "ON" : "OFF"}
+                Glow: {cursorGlowEnabled ? "ON" : "OFF"}
               </button>
+              
               <button 
                 onClick={() => setShowLanding(false)}
                 className="glow-button px-5 py-2 rounded-xl text-xs font-semibold bg-violet-600 hover:bg-violet-500 text-white shadow-lg transition"
@@ -674,13 +994,20 @@ export default function Dashboard() {
               >
                 Launch CRM Console <ArrowRight size={14} />
               </button>
+              
+              {/* Seed Button under Admin Auth Guard */}
               <button 
                 onClick={handleSeedData}
-                disabled={seeding}
-                className="px-6 py-3 rounded-xl text-xs font-semibold bg-zinc-950/80 hover:bg-zinc-900 border border-white/[0.05] text-zinc-300 hover:text-white flex items-center gap-2 disabled:opacity-50"
+                disabled={seeding || currentUser.role !== "admin"}
+                className={`px-6 py-3 rounded-xl text-xs font-semibold flex items-center gap-2 border transition ${
+                  currentUser.role === "admin"
+                    ? "bg-zinc-950/80 hover:bg-zinc-900 border-white/[0.05] text-zinc-300 hover:text-white"
+                    : "bg-zinc-900/40 border-white/[0.02] text-zinc-600 cursor-not-allowed"
+                }`}
+                title={currentUser.role === "admin" ? "Seed mock D2C shopper data" : "Requires Admin privileges"}
               >
-                <Database size={13} className={seeding ? "animate-spin text-violet-400" : ""} />
-                {seeding ? "Hydrating profiles..." : "Hydrate Sample Shoppers"}
+                {currentUser.role === "admin" ? <Database size={13} className={seeding ? "animate-spin text-violet-400" : ""} /> : <Lock size={12} className="text-zinc-600" />}
+                {seeding ? "Hydrating profiles..." : currentUser.role === "admin" ? "Hydrate Sample Shoppers" : "Hydration Locked"}
               </button>
             </motion.div>
           </section>
@@ -761,7 +1088,12 @@ export default function Dashboard() {
                   value={aiPrompt}
                   onChange={(e) => setAiPrompt(e.target.value)}
                   placeholder="Enter a marketer prompt, e.g. 'Target inactive VIP shopper fashion cohorts on RCS with summer discount code'..."
-                  className="w-full h-20 p-4 rounded-xl border border-white/[0.05] bg-[#030303]/90 text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 resize-none transition duration-200 leading-relaxed"
+                  disabled={currentUser.role === "viewer"}
+                  className={`w-full h-20 p-4 rounded-xl border text-xs text-zinc-200 placeholder-zinc-700 resize-none transition duration-200 leading-relaxed ${
+                    currentUser.role === "viewer"
+                      ? "bg-zinc-950/30 border-white/[0.02] cursor-not-allowed"
+                      : "bg-black/90 border-white/[0.05] focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30"
+                  }`}
                 />
 
                 <div className="flex flex-wrap gap-2">
@@ -772,7 +1104,8 @@ export default function Dashboard() {
                     <button
                       key={idx}
                       onClick={() => setAiPrompt(tpl)}
-                      className="text-[10px] px-3 py-1.5 rounded-full border border-white/[0.04] bg-white/[0.01] hover:bg-white/[0.03] text-zinc-500 hover:text-zinc-300 transition"
+                      disabled={currentUser.role === "viewer"}
+                      className="text-[10px] px-3 py-1.5 rounded-full border border-white/[0.04] bg-white/[0.01] hover:bg-white/[0.03] text-zinc-500 hover:text-zinc-300 transition disabled:opacity-30 disabled:cursor-not-allowed"
                     >
                       {tpl}
                     </button>
@@ -782,18 +1115,18 @@ export default function Dashboard() {
                 <div className="flex justify-end">
                   <button
                     onClick={handleGenerateStrategy}
-                    disabled={aiLoading || !aiPrompt}
+                    disabled={aiLoading || !aiPrompt || currentUser.role === "viewer"}
                     className="glow-button flex items-center gap-2 py-2.5 px-6 rounded-xl text-xs font-semibold bg-violet-600 hover:bg-violet-500 text-white transition disabled:opacity-40"
                   >
-                    {aiLoading ? <RefreshCw size={12} className="animate-spin" /> : <Sparkles size={12} />}
-                    {aiLoading ? "Agent compiling..." : "Simulate Agent Run"}
+                    {currentUser.role === "viewer" ? <Lock size={12} /> : aiLoading ? <RefreshCw size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                    {currentUser.role === "viewer" ? "strategist locked" : aiLoading ? "Agent compiling..." : "Simulate Agent Run"}
                   </button>
                 </div>
 
                 {/* Simulated Agent Graph Node Visualizer */}
                 {agentStep >= 0 && (
                   <div className="border-t border-white/[0.04] pt-6 space-y-6">
-                    <h4 className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 text-center">Multi-Agent Node Lifecycle</h4>
+                    <h4 className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 text-center font-sans">Multi-Agent Node Lifecycle</h4>
                     
                     <div className="grid grid-cols-4 gap-4">
                       {[
@@ -856,13 +1189,13 @@ export default function Dashboard() {
                 {aiRecommendation && (
                   <div className="p-5 rounded-xl border border-emerald-500/20 bg-emerald-500/5 space-y-4">
                     <div className="flex justify-between items-center">
-                      <h4 className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider">Simulated strategy ready</h4>
+                      <h4 className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider font-sans">Simulated strategy ready</h4>
                       <button 
                         onClick={() => {
                           setShowLanding(false);
                           setActiveTab("copilot");
                         }}
-                        className="text-[10px] font-semibold text-violet-400 hover:text-violet-300 flex items-center gap-1"
+                        className="text-[10px] font-semibold text-violet-400 hover:text-violet-300 flex items-center gap-1 cursor-pointer font-sans"
                       >
                         Inspect details in Workspace <ExternalLink size={10} />
                       </button>
@@ -871,12 +1204,12 @@ export default function Dashboard() {
                       <div className="p-3 bg-black/40 border border-white/[0.03] rounded-lg">
                         <span className="text-[9px] text-zinc-500 block">Audience SQL rules:</span>
                         <pre className="text-[9px] text-zinc-400 font-mono mt-1 overflow-x-auto">
-                          {JSON.stringify(aiRecommendation.rules, null, 1)}
+                          {jsonClean(aiRecommendation.rules)}
                         </pre>
                       </div>
                       <div className="p-3 bg-black/40 border border-white/[0.03] rounded-lg">
                         <span className="text-[9px] text-zinc-500 block">Recommended channel:</span>
-                        <span className="inline-block mt-2 px-2.5 py-0.5 bg-violet-500/10 text-violet-300 border border-violet-500/20 rounded font-bold uppercase text-[9px]">
+                        <span className="inline-block mt-2 px-2.5 py-0.5 bg-violet-500/10 text-violet-300 border border-violet-500/20 rounded font-bold uppercase text-[9px] font-mono">
                           {aiRecommendation.channel}
                         </span>
                         <p className="text-[9px] text-zinc-500 mt-2 leading-relaxed">{aiRecommendation.explanation?.slice(0, 80)}...</p>
@@ -905,7 +1238,7 @@ export default function Dashboard() {
         </div>
       ) : (
         
-        // CORE INTEGRATED CRM WORKSPACE
+        // CORE INTEGRATED CRM WORKSPACE (Authenticated)
         <div className="flex flex-1 min-h-screen relative overflow-hidden">
 
           {/* Side Drawer details */}
@@ -943,7 +1276,7 @@ export default function Dashboard() {
                       </div>
                       <button 
                         onClick={() => setDrawerOpen(false)}
-                        className="p-1 rounded-lg bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.05] transition text-zinc-400 hover:text-zinc-200"
+                        className="p-1 rounded-lg bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.05] transition text-zinc-400 hover:text-zinc-200 cursor-pointer"
                       >
                         <X size={14} />
                       </button>
@@ -985,7 +1318,7 @@ export default function Dashboard() {
                         <div className="p-4 rounded-xl border border-violet-500/20 bg-violet-950/10 space-y-3">
                           <div className="flex items-center gap-2 text-violet-300">
                             <Sparkles size={13} />
-                            <span className="text-[10px] font-bold uppercase tracking-wider">AI Shopper Intelligence insights</span>
+                            <span className="text-[10px] font-bold uppercase tracking-wider font-sans">AI Shopper Intelligence insights</span>
                           </div>
                           <div className="space-y-2 text-[11px] text-violet-200 leading-relaxed font-sans">
                             <p>🎯 <strong>Recommended Next Action:</strong> Deploy {selectedCustomer.metadata?.preferred_category === "Coffee" ? "beans refresh coupon" : "new styles catalog"} via <strong>WhatsApp</strong>.</p>
@@ -997,7 +1330,7 @@ export default function Dashboard() {
                         <div className="space-y-3">
                           <h4 className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Order Purchase History</h4>
                           {selectedCustomer.orders.length > 0 ? (
-                            <div className="relative pl-6 space-y-4">
+                            <div className="relative pl-6 space-y-4 font-sans">
                               <div className="timeline-line" />
                               {selectedCustomer.orders.map((order, i) => (
                                 <div key={i} className="relative text-xs">
@@ -1020,7 +1353,7 @@ export default function Dashboard() {
                               ))}
                             </div>
                           ) : (
-                            <div className="text-center py-4 border border-dashed border-white/[0.03] rounded-lg text-[10px] text-zinc-600">
+                            <div className="text-center py-4 border border-dashed border-white/[0.03] rounded-lg text-[10px] text-zinc-600 font-sans">
                               No purchase events registered.
                             </div>
                           )}
@@ -1030,7 +1363,7 @@ export default function Dashboard() {
                         <div className="space-y-3">
                           <h4 className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Marketing Touchpoints History</h4>
                           {selectedCustomer.touchpoints.length > 0 ? (
-                            <div className="relative pl-6 space-y-4">
+                            <div className="relative pl-6 space-y-4 font-sans">
                               <div className="timeline-line" />
                               {selectedCustomer.touchpoints.map((tp, i) => (
                                 <div key={i} className="relative text-xs">
@@ -1056,7 +1389,7 @@ export default function Dashboard() {
                               ))}
                             </div>
                           ) : (
-                            <div className="text-center py-4 border border-dashed border-white/[0.03] rounded-lg text-[10px] text-zinc-600">
+                            <div className="text-center py-4 border border-dashed border-white/[0.03] rounded-lg text-[10px] text-zinc-600 font-sans">
                               No campaigns targeted to this customer yet.
                             </div>
                           )}
@@ -1064,7 +1397,7 @@ export default function Dashboard() {
 
                       </div>
                     ) : (
-                      <div className="text-center py-20 text-xs text-zinc-600">
+                      <div className="text-center py-20 text-xs text-zinc-600 font-sans">
                         Select a customer to inspect.
                       </div>
                     )}
@@ -1080,7 +1413,7 @@ export default function Dashboard() {
           </AnimatePresence>
 
           {/* Sidebar navigation */}
-          <aside className="w-64 border-r border-white/[0.04] bg-[#08080a]/90 backdrop-blur-xl flex flex-col justify-between p-6 z-20 shrink-0">
+          <aside className="w-64 border-r border-white/[0.04] bg-[#08080a]/90 backdrop-blur-xl flex flex-col justify-between p-6 z-20 shrink-0 font-sans">
             <div>
               {/* Logo */}
               <div className="flex items-center gap-2.5 mb-10 pl-2">
@@ -1111,7 +1444,7 @@ export default function Dashboard() {
                     <button
                       key={item.id}
                       onClick={() => setActiveTab(item.id)}
-                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition-all duration-200 ${
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition-all duration-200 cursor-pointer ${
                         activeTab === item.id 
                           ? "bg-white/[0.04] text-zinc-100 border border-white/[0.06] shadow-sm pl-4 relative" 
                           : "text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.01]"
@@ -1130,13 +1463,38 @@ export default function Dashboard() {
 
             {/* Sidebar Footer */}
             <div className="border-t border-white/[0.04] pt-6 space-y-4">
+              
+              {/* Active User tag */}
+              <div className="p-3 bg-white/[0.01] border border-white/[0.03] rounded-xl flex items-center gap-2">
+                <div className="w-7 h-7 rounded-full bg-violet-950 border border-violet-800 flex items-center justify-center font-bold text-[10px] text-violet-300">
+                  {currentUser.username?.slice(0, 2).toUpperCase()}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <span className="block text-[10px] font-bold text-zinc-200 truncate">{currentUser.username}</span>
+                  <span className="block text-[8px] text-zinc-500 font-mono uppercase truncate">{currentUser.role} permissions</span>
+                </div>
+                <button 
+                  onClick={handleLogout}
+                  className="text-zinc-500 hover:text-red-400 transition"
+                  title="Sign Out"
+                >
+                  <LogOut size={12} />
+                </button>
+              </div>
+
+              {/* Seed Button under Admin Auth Guard */}
               <button 
                 onClick={handleSeedData}
-                disabled={seeding}
-                className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-[11px] font-semibold border border-white/[0.05] bg-zinc-950/80 hover:bg-zinc-900 text-zinc-300 hover:text-zinc-100 transition-all duration-200 disabled:opacity-50"
+                disabled={seeding || currentUser.role !== "admin"}
+                className={`w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-[11px] font-semibold border transition ${
+                  currentUser.role === "admin"
+                    ? "bg-zinc-950/80 hover:bg-zinc-900 border-white/[0.05] text-zinc-300 hover:text-zinc-100 cursor-pointer"
+                    : "bg-zinc-900/40 border-white/[0.02] text-zinc-600 cursor-not-allowed"
+                }`}
+                title={currentUser.role === "admin" ? "Hydrate database" : "Admin privileges required"}
               >
-                <Database size={12} className={seeding ? "animate-spin text-violet-400" : ""} />
-                {seeding ? "Hydrating Database..." : "Hydrate D2C Profiles"}
+                {currentUser.role === "admin" ? <Database size={12} className={seeding ? "animate-spin text-violet-400" : ""} /> : <Lock size={11} className="text-zinc-600" />}
+                {seeding ? "Hydrating Database..." : currentUser.role === "admin" ? "Hydrate D2C Profiles" : "Hydration Locked"}
               </button>
               
               <div className="flex items-center gap-3 px-2">
@@ -1155,13 +1513,17 @@ export default function Dashboard() {
 
           {/* Main Panel */}
           <main className="flex-1 flex flex-col min-w-0 overflow-y-auto z-10 relative">
-            <header className="h-16 border-b border-white/[0.03] px-8 flex items-center justify-between bg-black/20 backdrop-blur-md sticky top-0 z-30">
+            <header className="h-16 border-b border-white/[0.03] px-8 flex items-center justify-between bg-black/20 backdrop-blur-md sticky top-0 z-30 font-sans">
               
               {/* Command K input mockup */}
               <div 
                 onClick={() => {
-                  setActiveTab("copilot");
-                  setAiPrompt("Target coffee buyers who haven't ordered recently...");
+                  if (currentUser.role !== "viewer") {
+                    setActiveTab("copilot");
+                    setAiPrompt("Target coffee buyers who haven't ordered recently...");
+                  } else {
+                    showToast("Access Denied: Viewers cannot trigger strategist prompts.", "error");
+                  }
                 }}
                 className="flex items-center gap-3 bg-white/[0.02] border border-white/[0.04] px-3.5 py-1.5 rounded-xl w-80 text-zinc-500 text-xs cursor-pointer hover:border-white/[0.08] transition"
               >
@@ -1173,7 +1535,7 @@ export default function Dashboard() {
               <div className="flex items-center gap-4">
                 <button 
                   onClick={() => setShowLanding(true)}
-                  className="text-[10px] font-bold text-zinc-500 hover:text-zinc-300 border border-white/[0.04] bg-white/[0.01] px-2.5 py-1 rounded-lg"
+                  className="text-[10px] font-bold text-zinc-500 hover:text-zinc-300 border border-white/[0.04] bg-white/[0.01] px-2.5 py-1 rounded-lg cursor-pointer"
                 >
                   Landing Preview
                 </button>
@@ -1182,7 +1544,7 @@ export default function Dashboard() {
                   SQL Sandbox Connected
                 </div>
                 <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-violet-950 to-indigo-950 border border-white/[0.06] flex items-center justify-center text-xs font-semibold text-violet-300 shadow">
-                  AD
+                  {currentUser.role?.slice(0, 2).toUpperCase()}
                 </div>
               </div>
             </header>
@@ -1342,7 +1704,7 @@ export default function Dashboard() {
                         {recentCampaigns.length > 0 ? (
                           recentCampaigns.map((c, i) => (
                             <div key={i} className="py-3 flex items-center justify-between text-xs hover:bg-white/[0.005] px-2 rounded-lg transition duration-150">
-                              <div className="flex items-center gap-3">
+                              <div className="flex items-center gap-3 font-sans">
                                 <div className="p-1.5 rounded-lg bg-white/[0.02] text-zinc-400 border border-white/[0.04]">
                                   <Send size={12} />
                                 </div>
@@ -1390,7 +1752,7 @@ export default function Dashboard() {
                         </div>
                         <div>
                           <h3 className="text-sm font-semibold text-zinc-200">Autonomous Marketing Strategist</h3>
-                          <p className="text-[11px] text-zinc-500 mt-0.5">Define your goals, and Xeno will segment the cohort, recommend the channel, and compose copy.</p>
+                          <p className="text-[11px] text-zinc-500 mt-0.5 font-sans">Define your goals, and Xeno will segment the cohort, recommend the channel, and compose copy.</p>
                         </div>
                       </div>
 
@@ -1399,11 +1761,16 @@ export default function Dashboard() {
                           value={aiPrompt}
                           onChange={(e) => setAiPrompt(e.target.value)}
                           placeholder="Describe your strategy: 'Re-engage customers who preferred fashion items and haven't ordered in 60 days...'"
-                          className="w-full h-24 p-4 rounded-xl border border-white/[0.05] bg-[#030303]/90 text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 resize-none transition duration-200 leading-relaxed"
+                          disabled={currentUser.role === "viewer"}
+                          className={`w-full h-24 p-4 rounded-xl border text-xs text-zinc-200 placeholder-zinc-700 resize-none transition duration-200 leading-relaxed ${
+                            currentUser.role === "viewer"
+                              ? "bg-zinc-950/20 border-white/[0.03] cursor-not-allowed"
+                              : "bg-[#030303]/90 border-white/[0.05] focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30"
+                          }`}
                         />
                         
                         {/* Preset prompt templates */}
-                        <div className="flex flex-wrap gap-2 pt-1">
+                        <div className="flex flex-wrap gap-2 pt-1 font-sans">
                           {[
                             "Target inactive coffee buyers and win them back on WhatsApp",
                             "Find VIP fashion spenders and reward them with early RCS deals",
@@ -1412,7 +1779,8 @@ export default function Dashboard() {
                             <button
                               key={i}
                               onClick={() => setAiPrompt(tpl)}
-                              className="text-[10px] px-2.5 py-1.5 rounded-full border border-white/[0.04] bg-white/[0.01] hover:bg-white/[0.03] text-zinc-500 hover:text-zinc-300 transition duration-150"
+                              disabled={currentUser.role === "viewer"}
+                              className="text-[10px] px-2.5 py-1.5 rounded-full border border-white/[0.04] bg-white/[0.01] hover:bg-white/[0.03] text-zinc-500 hover:text-zinc-300 transition duration-150 disabled:opacity-30 disabled:cursor-not-allowed"
                             >
                               {tpl}
                             </button>
@@ -1423,19 +1791,19 @@ export default function Dashboard() {
                       <div className="flex justify-end pt-2">
                         <button
                           onClick={handleGenerateStrategy}
-                          disabled={aiLoading || !aiPrompt}
+                          disabled={aiLoading || !aiPrompt || currentUser.role === "viewer"}
                           className="flex items-center gap-2 py-2 px-5 rounded-xl text-xs font-semibold bg-violet-500 hover:bg-violet-400 text-zinc-950 font-bold transition duration-200 shadow-md disabled:opacity-40"
                         >
-                          {aiLoading ? <RefreshCw size={12} className="animate-spin" /> : <Sparkles size={12} />}
-                          {aiLoading ? "Orchestrating agents..." : "Synthesize Strategy"}
+                          {currentUser.role === "viewer" ? <Lock size={12} /> : aiLoading ? <RefreshCw size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                          {currentUser.role === "viewer" ? "strategist locked" : aiLoading ? "Orchestrating agents..." : "Synthesize Strategy"}
                         </button>
                       </div>
                     </div>
 
-                    {/* Simulated Agent Graph Node Visualizer (Rendered inside the tab workspace as well) */}
+                    {/* Simulated Agent Graph Node Visualizer */}
                     {agentStep >= 0 && (
                       <div className="p-6 rounded-2xl bg-[#0b0b0d]/70 border border-white/[0.03] space-y-6">
-                        <h4 className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 text-center">Multi-Agent Node Graph Execution</h4>
+                        <h4 className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 text-center font-sans">Multi-Agent Node Graph Execution</h4>
                         
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                           {[
@@ -1508,7 +1876,7 @@ export default function Dashboard() {
                               <input
                                 value={campaignName}
                                 onChange={(e) => setCampaignName(e.target.value)}
-                                className="px-3 py-1.5 rounded-xl border border-white/[0.05] bg-[#030303] text-xs font-semibold w-64 focus:outline-none focus:border-violet-500/50"
+                                className="px-3 py-1.5 rounded-xl border border-white/[0.05] bg-[#030303] text-xs font-semibold w-64 focus:outline-none focus:border-violet-500/50 text-zinc-200"
                                 placeholder="Campaign Name"
                               />
                             </div>
@@ -1524,7 +1892,7 @@ export default function Dashboard() {
                                 <div>
                                   <span className="text-[10px] text-zinc-500 block mb-1.5 font-sans">SQL targeting filters:</span>
                                   <pre className="text-[10px] text-zinc-400 bg-black/40 p-3 rounded-lg border border-white/[0.02] font-mono leading-relaxed overflow-x-auto">
-                                    {JSON.stringify(aiRecommendation.rules, null, 2)}
+                                    {jsonClean(aiRecommendation.rules)}
                                   </pre>
                                 </div>
                               </div>
@@ -1573,8 +1941,8 @@ export default function Dashboard() {
                             <div className="flex justify-end pt-4 border-t border-white/[0.04]">
                               <button
                                 onClick={() => handleLaunchCampaign()}
-                                disabled={launchingCampaign}
-                                className="flex items-center gap-2 py-2 px-5 rounded-xl text-xs font-semibold bg-emerald-500 hover:bg-emerald-400 text-zinc-950 transition font-bold shadow-md shadow-emerald-500/10"
+                                disabled={launchingCampaign || currentUser.role === "viewer"}
+                                className="flex items-center gap-2 py-2 px-5 rounded-xl text-xs font-semibold bg-emerald-500 hover:bg-emerald-400 text-zinc-950 transition font-bold shadow-md shadow-emerald-500/10 cursor-pointer"
                               >
                                 {launchingCampaign ? <RefreshCw size={12} className="animate-spin" /> : <Send size={12} />}
                                 {launchingCampaign ? "Deploying..." : "Launch Campaign"}
@@ -1587,7 +1955,7 @@ export default function Dashboard() {
                   </div>
 
                   {/* Right Column: Simulated Mobile preview phone shell */}
-                  <div className="flex flex-col items-center justify-start space-y-4 pt-4">
+                  <div className="flex flex-col items-center justify-start space-y-4 pt-4 font-sans">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Live Carrier Previews</span>
                     
                     {/* Device frame previewer */}
@@ -1595,12 +1963,12 @@ export default function Dashboard() {
                       <div className="phone-speaker" />
                       
                       {/* Interactive header of screen */}
-                      <div className="flex items-center justify-between text-[10px] text-zinc-500 font-bold border-b border-white/[0.03] pb-2 font-sans">
+                      <div className="flex items-center justify-between text-[10px] text-zinc-500 font-bold border-b border-white/[0.03] pb-2">
                         <div className="flex items-center gap-1">
                           <Smartphone size={10} className="text-zinc-600" />
                           <span>Xeno Carrier v2.0</span>
                         </div>
-                        <span className="text-[8px] px-1 bg-white/[0.02] border border-white/[0.05] rounded text-zinc-600">5G LTE</span>
+                        <span className="text-[8px] px-1 bg-white/[0.02] border border-white/[0.05] rounded text-zinc-600 font-mono">5G LTE</span>
                       </div>
 
                       {/* Render Screen body */}
@@ -1663,7 +2031,7 @@ export default function Dashboard() {
                             <button
                               key={chnl.id}
                               onClick={() => setPreviewChannel(chnl.id as any)}
-                              className={`p-1.5 rounded-lg flex flex-col items-center gap-0.5 transition ${
+                              className={`p-1.5 rounded-lg flex flex-col items-center gap-0.5 transition cursor-pointer ${
                                 isActive ? "bg-white/[0.04] text-violet-400" : "text-zinc-600 hover:text-zinc-400"
                               }`}
                               title={chnl.label}
@@ -1689,7 +2057,7 @@ export default function Dashboard() {
                 >
                   
                   {/* View mode toggle */}
-                  <div className="flex justify-between items-center">
+                  <div className="flex justify-between items-center font-sans">
                     <div>
                       <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Campaign Lifecycles</h3>
                       <p className="text-[10px] text-zinc-500 font-sans mt-0.5">Track sends and real-time webhook metric transitions.</p>
@@ -1698,7 +2066,7 @@ export default function Dashboard() {
                     <div className="flex gap-2 border border-white/[0.04] bg-white/[0.01] p-1 rounded-xl">
                       <button 
                         onClick={() => setIsKanban(false)}
-                        className={`px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-1.5 transition ${
+                        className={`px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-1.5 transition cursor-pointer ${
                           !isKanban ? "bg-white/[0.04] text-zinc-100" : "text-zinc-500 hover:text-zinc-300"
                         }`}
                       >
@@ -1707,7 +2075,7 @@ export default function Dashboard() {
                       </button>
                       <button 
                         onClick={() => setIsKanban(true)}
-                        className={`px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-1.5 transition ${
+                        className={`px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-1.5 transition cursor-pointer ${
                           isKanban ? "bg-white/[0.04] text-zinc-100" : "text-zinc-500 hover:text-zinc-300"
                         }`}
                       >
@@ -1720,7 +2088,7 @@ export default function Dashboard() {
                   {isKanban ? (
                     
                     /* KANBAN BOARD VIEW (Horilla CRM Inspired) */
-                    <div className="kanban-board">
+                    <div className="kanban-board font-sans">
                       
                       {/* Column 1: Drafts */}
                       <div className="kanban-col space-y-3">
@@ -1736,15 +2104,22 @@ export default function Dashboard() {
                               <div className="flex justify-between items-start">
                                 <h4 className="text-[11px] font-bold text-zinc-200 uppercase tracking-wider">{c.name?.slice(0, 26)}</h4>
                               </div>
-                              <span className="text-[9px] text-zinc-500 block font-sans">Cohort: {c.segment_name?.slice(0, 30)}</span>
+                              <span className="text-[9px] text-zinc-500 block">Cohort: {c.segment_name?.slice(0, 30)}</span>
                               <div className="flex items-center justify-between pt-2 border-t border-white/[0.02]">
                                 <span className="text-[8px] px-1.5 py-0.5 bg-zinc-900 text-zinc-500 rounded border border-white/[0.04] uppercase font-bold">whatsapp</span>
-                                <button 
-                                  onClick={() => handleLaunchFromKanban(c)}
-                                  className="text-[9px] font-semibold bg-violet-600 hover:bg-violet-500 text-white px-2 py-1 rounded cursor-pointer"
-                                >
-                                  Deploy
-                                </button>
+                                
+                                {currentUser.role === "viewer" ? (
+                                  <div className="text-[9px] text-zinc-600 flex items-center gap-1">
+                                    <Lock size={9} /> Restricted
+                                  </div>
+                                ) : (
+                                  <button 
+                                    onClick={() => handleLaunchFromKanban(c)}
+                                    className="text-[9px] font-semibold bg-violet-600 hover:bg-violet-500 text-white px-2 py-1 rounded cursor-pointer"
+                                  >
+                                    Deploy
+                                  </button>
+                                )}
                               </div>
                             </div>
                           ))}
@@ -1763,7 +2138,7 @@ export default function Dashboard() {
                           {campaigns.filter(c => c.status === "sending" && c.metrics.total === 0).map((c, i) => (
                             <div key={i} className="kanban-item border border-violet-500/20 bg-violet-950/5 space-y-3 font-sans">
                               <h4 className="text-[11px] font-bold text-violet-300 uppercase tracking-wider">{c.name?.slice(0, 26)}</h4>
-                              <div className="flex items-center gap-2 text-[9px] text-violet-400">
+                              <div className="flex items-center gap-2 text-[9px] text-violet-400 font-sans">
                                 <RefreshCw size={10} className="animate-spin" />
                                 <span>AI segmenting and routing...</span>
                               </div>
@@ -1784,7 +2159,7 @@ export default function Dashboard() {
                           {campaigns.filter(c => c.status === "sending" && c.metrics.total > 0).map((c, i) => (
                             <div key={i} className="kanban-item space-y-3 font-sans border-l-2 border-l-indigo-500">
                               <h4 className="text-[11px] font-bold text-zinc-200 uppercase tracking-wider">{c.name?.slice(0, 26)}</h4>
-                              <div className="space-y-1 text-[9px] text-zinc-500">
+                              <div className="space-y-1 text-[9px] text-zinc-500 font-sans">
                                 <div className="flex justify-between">
                                   <span>Outbox scheduled:</span>
                                   <span className="font-bold text-zinc-300">{c.metrics.total}</span>
@@ -1811,7 +2186,7 @@ export default function Dashboard() {
                           {campaigns.filter(c => c.status === "completed").map((c, i) => (
                             <div key={i} className="kanban-item space-y-3 font-sans border-l-2 border-l-emerald-500 bg-zinc-950/20">
                               <h4 className="text-[11px] font-bold text-zinc-200 uppercase tracking-wider">{c.name?.slice(0, 26)}</h4>
-                              <div className="space-y-1 text-[9px] text-zinc-500">
+                              <div className="space-y-1 text-[9px] text-zinc-500 font-sans">
                                 <div className="flex justify-between">
                                   <span>Total Sent:</span>
                                   <span className="font-bold text-zinc-300">{c.metrics.total}</span>
@@ -1830,7 +2205,7 @@ export default function Dashboard() {
                   ) : (
                     
                     /* STANDARD DETAILED LIST VIEW */
-                    <div className="border border-white/[0.03] bg-[#0b0b0d]/70 rounded-2xl overflow-hidden shadow-xl">
+                    <div className="border border-white/[0.03] bg-[#0b0b0d]/70 rounded-2xl overflow-hidden shadow-xl font-sans">
                       <div className="divide-y divide-white/[0.03]">
                         {campaigns.length > 0 ? (
                           campaigns.map((c, i) => {
@@ -1847,7 +2222,7 @@ export default function Dashboard() {
                                 <div className="flex items-center justify-between">
                                   <div>
                                     <h4 className="font-bold text-zinc-200 text-xs uppercase tracking-wider">{c.name}</h4>
-                                    <span className="text-[10px] text-zinc-500 block mt-0.5">Cohort Filter: {c.segment_name}</span>
+                                    <span className="text-[10px] text-zinc-500 block mt-0.5 font-sans">Cohort Filter: {c.segment_name}</span>
                                   </div>
                                   
                                   <span className={`text-[9px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full border ${
@@ -1902,7 +2277,7 @@ export default function Dashboard() {
                 >
                   
                   {/* Search and Filters Bar */}
-                  <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-[#0b0b0d]/70 p-4 rounded-2xl border border-white/[0.03]">
+                  <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-[#0b0b0d]/70 p-4 rounded-2xl border border-white/[0.03] font-sans">
                     
                     {/* Search query box */}
                     <div className="relative w-full md:w-80">
@@ -1911,7 +2286,7 @@ export default function Dashboard() {
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         placeholder="Search name, email, or phone..."
-                        className="w-full pl-10 pr-4 py-2 bg-black/40 border border-white/[0.05] rounded-xl text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-violet-500/50"
+                        className="w-full pl-10 pr-4 py-2 bg-black/40 border border-white/[0.05] rounded-xl text-xs text-zinc-200 placeholder-zinc-700 focus:outline-none focus:border-violet-500/50"
                       />
                     </div>
 
@@ -1920,13 +2295,13 @@ export default function Dashboard() {
                       
                       {/* Loyalty Tier Filter */}
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">Tier:</span>
+                        <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider font-sans">Tier:</span>
                         <div className="flex gap-1">
                           {["All", "VIP", "Gold", "Silver", "Regular"].map(tier => (
                             <button
                               key={tier}
                               onClick={() => setSelectedTier(tier)}
-                              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition ${
+                              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition cursor-pointer ${
                                 selectedTier === tier 
                                   ? "bg-violet-500/10 border border-violet-500/20 text-violet-300" 
                                   : "bg-white/[0.01] border border-white/[0.04] text-zinc-400 hover:text-zinc-200"
@@ -1940,13 +2315,13 @@ export default function Dashboard() {
 
                       {/* Category preference filters */}
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">Category:</span>
+                        <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider font-sans">Category:</span>
                         <div className="flex gap-1">
                           {["All", "Fashion", "Coffee", "Electronics"].map(cat => (
                             <button
                               key={cat}
                               onClick={() => setSelectedCategory(cat)}
-                              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition ${
+                              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition cursor-pointer ${
                                 selectedCategory === cat 
                                   ? "bg-indigo-500/10 border border-indigo-500/20 text-indigo-300" 
                                   : "bg-white/[0.01] border border-white/[0.04] text-zinc-400 hover:text-zinc-200"
@@ -1962,7 +2337,7 @@ export default function Dashboard() {
                       <div className="flex gap-1 border-l border-white/[0.05] pl-4">
                         <button 
                           onClick={() => setIsCardView(false)}
-                          className={`p-1.5 rounded-lg transition ${
+                          className={`p-1.5 rounded-lg transition cursor-pointer ${
                             !isCardView ? "bg-white/[0.04] text-violet-400" : "text-zinc-500 hover:text-zinc-300"
                           }`}
                           title="List Table view"
@@ -1971,7 +2346,7 @@ export default function Dashboard() {
                         </button>
                         <button 
                           onClick={() => setIsCardView(true)}
-                          className={`p-1.5 rounded-lg transition ${
+                          className={`p-1.5 rounded-lg transition cursor-pointer ${
                             isCardView ? "bg-white/[0.04] text-violet-400" : "text-zinc-500 hover:text-zinc-300"
                           }`}
                           title="Card Grid view"
@@ -2035,7 +2410,7 @@ export default function Dashboard() {
                                 </span>
                                 <button 
                                   onClick={() => openCustomerDrawer(c.id)}
-                                  className="text-[9px] font-bold text-violet-400 hover:text-violet-300 flex items-center gap-0.5 cursor-pointer"
+                                  className="text-[9px] font-bold text-violet-400 hover:text-violet-300 flex items-center gap-0.5 cursor-pointer font-sans"
                                 >
                                   Inspect Profile <ChevronRight size={10} />
                                 </button>
@@ -2052,7 +2427,7 @@ export default function Dashboard() {
                   ) : (
                     
                     /* STANDARD DATABASE TABLE VIEW */
-                    <div className="border border-white/[0.03] bg-[#0b0b0d]/70 rounded-2xl overflow-hidden shadow-xl">
+                    <div className="border border-white/[0.03] bg-[#0b0b0d]/70 rounded-2xl overflow-hidden shadow-xl font-sans">
                       <div className="overflow-x-auto">
                         <table className="w-full text-left text-xs border-collapse">
                           <thead>
@@ -2072,7 +2447,7 @@ export default function Dashboard() {
                                   onClick={() => openCustomerDrawer(c.id)}
                                   className="hover:bg-white/[0.008] transition duration-150 cursor-pointer"
                                 >
-                                  <td className="p-4 pl-6 font-semibold text-zinc-200">
+                                  <td className="p-4 pl-6 font-semibold text-zinc-200 font-sans">
                                     {c.first_name || "Unknown"} {c.last_name || ""}
                                     {c.metadata?.loyalty_tier && (
                                       <span className={`ml-2 px-2 py-0.5 rounded-full text-[8px] font-bold border uppercase tracking-wider ${
@@ -2124,7 +2499,7 @@ export default function Dashboard() {
                   animate={{ opacity: 1, y: 0 }} 
                   className="space-y-6"
                 >
-                  <div className="border border-white/[0.03] bg-[#0b0b0d]/70 rounded-2xl overflow-hidden shadow-xl">
+                  <div className="border border-white/[0.03] bg-[#0b0b0d]/70 rounded-2xl overflow-hidden shadow-xl font-sans">
                     <div className="p-6 border-b border-white/[0.03]">
                       <h3 className="text-sm font-semibold text-zinc-200">System Activity Logs</h3>
                       <p className="text-[11px] text-zinc-500 mt-0.5">Immutable audit logging detailing webhook interactions and database dispatches.</p>
@@ -2156,4 +2531,16 @@ export default function Dashboard() {
       )}
     </div>
   );
+}
+
+// Visual JSON cleaner utility for pre-renders
+function jsonClean(obj: any): string {
+  if (!obj) return "";
+  try {
+    return JSON.stringify(obj, null, 1)
+      .replace(/\{|\}|\"/g, "")
+      .trim();
+  } catch(e) {
+    return "";
+  }
 }
